@@ -1,0 +1,15 @@
+[project]
+name = "comfyui_patches_ll"
+description = "Some patches for Flux etc, support TeaCache, PuLID."
+version = "1.0.0"
+license = {file = "LICENSE"}
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/lldacing/ComfyUI_Patches_ll"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = "lldacing"
+DisplayName = "ComfyUI_Patches_ll"
+Icon = ""
