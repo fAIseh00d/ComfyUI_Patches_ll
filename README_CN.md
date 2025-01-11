@@ -5,7 +5,7 @@
 ## 预览 (图片含工作流)
 ![save api extended](example/workflow_base.png)
 
-Working with `PuLID` (need my other custom nodes [ComfyUI_PuLID_Flux_ll](https://github.com/lldacing/ComfyUI_PuLID_Flux_ll))
+加速`PuLID` (需要配合我的另一插件 [ComfyUI_PuLID_Flux_ll](https://github.com/lldacing/ComfyUI_PuLID_Flux_ll)使用)
 ![save api extended](example/PuLID_with_teacache.png)
 
 
@@ -23,7 +23,7 @@ Working with `PuLID` (need my other custom nodes [ComfyUI_PuLID_Flux_ll](https:/
 - FluxForwardOverrider
   - 为`Flux`模型增加一些`hook`方法支持
 - ApplyTeaCachePatch
-  - 使用`FluxForwardOverrider`中的预留的hook，支持`TeaCache`加速（目前支持`Flux`，后面会加视频相关)
+  - 使用`FluxForwardOverrider`中支持的hook，支持`TeaCache`加速（目前仅支持`Flux`，后面会加视频相关)
 
 ## 感谢
 
