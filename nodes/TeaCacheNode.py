@@ -4,6 +4,10 @@ import comfy
 from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_model_patch_replace
 
 tea_cache_key_attrs = "tea_cache_attr"
+coefficients_obj = {
+    'Flux': [4.98651651e+02, -2.83781631e+02, 5.58554382e+01, -3.82021401e+00, 2.64230861e-01],
+    'HunYuanVideo': [7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02]
+}
 
 def tea_cache_enter(img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask, transformer_options):
     diffusion_model = transformer_options.get(PatchKeys.running_net_model)
@@ -33,7 +37,7 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
         should_calc = True
         attrs['accumulated_rel_l1_distance'] = 0
     else:
-        coefficients = [4.98651651e+02, -2.83781631e+02, 5.58554382e+01, -3.82021401e+00, 2.64230861e-01]
+        coefficients = coefficients_obj[attrs['coefficient_type']]
         rescale_func = np.poly1d(coefficients)
         attrs['accumulated_rel_l1_distance'] += rescale_func(((modulated_inp - attrs['previous_modulated_input']).abs().mean() / attrs['previous_modulated_input'].abs().mean()).cpu().item())
 
@@ -136,7 +140,8 @@ class ApplyTeaCachePatch:
                                       "min": 0.0,
                                       "max": 5.0,
                                       "step": 0.01,
-                                      "tooltip": "0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup)."
+                                      "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
+                                                 "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup)"
                                   }),
             }
         }
@@ -144,12 +149,15 @@ class ApplyTeaCachePatch:
     RETURN_TYPES = ("MODEL",)
     RETURN_NAMES = ("model",)
     FUNCTION = "apply_patch"
-    CATEGORY = "patches/flux"
-    DESCRIPTION = "TeaCache加速补丁"
+    CATEGORY = "patches/speed"
 
     def apply_patch(self, model, rel_l1_thresh):
 
         model = model.clone()
+        diffusion_model = model.get_model_object('diffusion_model')
+        diffusion_model = diffusion_model
+        if not isinstance(diffusion_model, comfy.ldm.flux.model.Flux) and not isinstance(diffusion_model, comfy.ldm.hunyuan_video.model.HunyuanVideo):
+            return model,
 
         set_model_patch(model, PatchKeys.options_key, tea_cache_enter, PatchKeys.dit_enter)
         set_model_patch(model, PatchKeys.options_key, tea_cache_patch_blocks_before, PatchKeys.dit_blocks_before)
@@ -162,8 +170,14 @@ class ApplyTeaCachePatch:
         set_model_patch(model, PatchKeys.options_key, tea_cache_patch_final_transition_after, PatchKeys.dit_final_layer_before)
         set_model_patch(model, PatchKeys.options_key, tea_cache_patch_dit_exit, PatchKeys.dit_exit)
 
-        flux_forward_patch = add_model_patch_option(model, tea_cache_key_attrs)
-        flux_forward_patch['rel_l1_thresh'] = rel_l1_thresh
+
+        tea_cache_attrs = add_model_patch_option(model, tea_cache_key_attrs)
+        tea_cache_attrs['rel_l1_thresh'] = rel_l1_thresh
+        if isinstance(diffusion_model, comfy.ldm.flux.model.Flux):
+            tea_cache_attrs['coefficient_type'] = 'Flux'
+
+        elif isinstance(diffusion_model, comfy.ldm.hunyuan_video.model.HunyuanVideo):
+                tea_cache_attrs['coefficient_type'] = 'HunYuanVideo'
 
         patch_key = "tea_cache_wrapper"
         if len(model.get_wrappers(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE, patch_key)) == 0:

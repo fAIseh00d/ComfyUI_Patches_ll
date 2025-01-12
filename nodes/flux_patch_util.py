@@ -1,11 +1,19 @@
-import types
-
 import torch
 from torch import Tensor
-
-import comfy
-from .patch_util import PatchKeys
 from comfy.ldm.flux.layers import timestep_embedding
+
+class PatchKeys:
+    options_key = "patches_point"
+    dit_enter = "patch_dit_enter"
+    dit_blocks_before = "patch_dit_blocks_before"
+    dit_double_blocks_replace = "patch_dit_double_blocks_replace"
+    dit_blocks_transition_replace = "patch_dit_blocks_transition_replace"
+    dit_single_blocks_replace = "patch_dit_single_blocks_replace"
+    dit_blocks_after = "patch_dit_blocks_after"
+    dit_blocks_after_transition_replace = "patch_dit_final_layer_before_replace"
+    dit_final_layer_before = "patch_dit_final_layer_before"
+    dit_exit = "patch_dit_exit"
+
 
 def flux_forward_orig(
     self,
@@ -21,14 +29,14 @@ def flux_forward_orig(
     attn_mask: Tensor = None,
 ) -> Tensor:
     patches_replace = transformer_options.get("patches_replace", {})
-    patches_point = transformer_options.get(PatchKeys.options_key, {})
+    patches_insert = transformer_options.get(PatchKeys.options_key, {})
 
     if img.ndim != 3 or txt.ndim != 3:
         raise ValueError("Input img and txt tensors must have 3 dimensions.")
 
-    transformer_options[PatchKeys.running_net_model] = self
+    transformer_options["running_net_model"] = self
 
-    patches_enter = patches_point.get(PatchKeys.dit_enter, [])
+    patches_enter = patches_insert.get(PatchKeys.dit_enter, [])
     if patches_enter is not None and len(patches_enter) > 0:
         for patch_enter in patches_enter:
             img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask = patch_enter(img,
@@ -59,13 +67,13 @@ def flux_forward_orig(
 
     blocks_replace = patches_replace.get("dit", {})
 
-    patch_blocks_before = patches_point.get(PatchKeys.dit_blocks_before, [])
-    if patch_blocks_before is not None and len(patch_blocks_before) > 0:
-        for blocks_before in patch_blocks_before:
-            img, txt, vec, ids, pe = blocks_before(img, txt, vec, ids, pe, transformer_options)
+    patches_blocks_enter = patches_insert.get(PatchKeys.dit_blocks_before, [])
+    if patches_blocks_enter is not None and len(patches_blocks_enter) > 0:
+        for patch_blocks_enter in patches_blocks_enter:
+            img, txt, vec, ids, pe = patch_blocks_enter(img, txt, vec, ids, pe, transformer_options)
 
     def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
-        running_net_model = transformer_options[PatchKeys.running_net_model]
+        running_net_model = transformer_options["running_net_model"]
         for i, block in enumerate(running_net_model.double_blocks):
             # 0 -> 18
             if ("double_block", i) in blocks_replace:
@@ -82,10 +90,13 @@ def flux_forward_orig(
                                                            "txt": txt,
                                                            "vec": vec,
                                                            "pe": pe,
-                                                           "attn_mask": attn_mask
+                                                           # add timestep for pulid
+                                                           # "timestep": timesteps,
+                                                           # "attn_mask": attn_mask
                                                            },
                                                           {
                                                               "original_block": block_wrap,
+                                                              "flux_model": running_net_model,
                                                               "transformer_options": transformer_options
                                                           })
                 txt = out["txt"]
@@ -102,7 +113,7 @@ def flux_forward_orig(
 
         return img, txt
 
-    patch_double_blocks_replace = patches_point.get(PatchKeys.dit_double_blocks_replace)
+    patch_double_blocks_replace = patches_insert.get(PatchKeys.dit_double_blocks_replace)
 
     if patch_double_blocks_replace is not None:
         img, txt = patch_double_blocks_replace({"img": img,
@@ -126,12 +137,7 @@ def flux_forward_orig(
                                       transformer_options=transformer_options
                                       )
 
-    patches_double_blocks_after = patches_point.get(PatchKeys.dit_double_blocks_after, [])
-    if patches_double_blocks_after is not None and len(patches_double_blocks_after) > 0:
-        for patch_double_blocks_after in patches_double_blocks_after:
-            img, txt = patch_double_blocks_after(img, txt, transformer_options)
-
-    patch_blocks_transition = patches_point.get(PatchKeys.dit_blocks_transition_replace)
+    patch_blocks_transition = patches_insert.get(PatchKeys.dit_blocks_transition_replace)
 
     def blocks_transition_wrap(**kwargs):
         txt = kwargs["txt"]
@@ -147,13 +153,8 @@ def flux_forward_orig(
     else:
         img = blocks_transition_wrap(img=img, txt=txt)
 
-    patches_single_blocks_before = patches_point.get(PatchKeys.dit_single_blocks_before, [])
-    if patches_single_blocks_before is not None and len(patches_single_blocks_before) > 0:
-        for patch_single_blocks_before in patches_single_blocks_before:
-            img, txt = patch_single_blocks_before(img, txt, transformer_options)
-
     def single_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
-        running_net_model = transformer_options[PatchKeys.running_net_model]
+        running_net_model = transformer_options["running_net_model"]
         for i, block in enumerate(running_net_model.single_blocks):
             # 0 -> 37
             if ("single_block", i) in blocks_replace:
@@ -166,6 +167,7 @@ def flux_forward_orig(
                     return out
 
                 out = blocks_replace[("single_block", i)]({"img": img,
+                                                           "timestep": timesteps,
                                                            "vec": vec,
                                                            "pe": pe,
                                                            "attn_mask": attn_mask},
@@ -186,124 +188,83 @@ def flux_forward_orig(
 
         return img
 
-    patch_single_blocks_replace = patches_point.get(PatchKeys.dit_single_blocks_replace)
+    patches_single_blocks_replace = patches_insert.get(PatchKeys.dit_single_blocks_replace)
 
-    if patch_single_blocks_replace is not None:
-        img, txt = patch_single_blocks_replace({"img": img,
-                                                "txt": txt,
-                                                "vec": vec,
-                                                "pe": pe,
-                                                "control": control,
-                                                "attn_mask": attn_mask
-                                                },
-                                               {
-                                                   "original_blocks": single_blocks_wrap,
-                                                   "transformer_options": transformer_options
-                                               })
+    if patches_single_blocks_replace is not None:
+        img, txt = patches_single_blocks_replace({"img": img,
+                                                  "txt": txt,
+                                                  "vec": vec,
+                                                  "pe": pe,
+                                                  "control": control,
+                                                  "attn_mask": attn_mask
+                                                  },
+                                                 {
+                                                     "original_blocks": single_blocks_wrap,
+                                                     "transformer_options": transformer_options
+                                                 })
     else:
         img = single_blocks_wrap(img=img,
-                                 txt=txt,
-                                 vec=vec,
-                                 pe=pe,
-                                 control=control,
-                                 attn_mask=attn_mask,
-                                 transformer_options=transformer_options
-                                 )
+                                      txt=txt,
+                                      vec=vec,
+                                      pe=pe,
+                                      control=control,
+                                      attn_mask=attn_mask,
+                                      transformer_options=transformer_options
+                                      )
 
-    patch_blocks_exit = patches_point.get(PatchKeys.dit_blocks_after, [])
-    if patch_blocks_exit is not None and len(patch_blocks_exit) > 0:
-        for blocks_after in patch_blocks_exit:
-            img, txt = blocks_after(img, txt, transformer_options)
+    patches_blocks_exit = patches_insert.get(PatchKeys.dit_blocks_after, [])
+    if patches_blocks_exit is not None and len(patches_blocks_exit) > 0:
+        for patch_blocks_exit in patches_blocks_exit:
+            img, txt = patch_blocks_exit(img, txt, transformer_options)
 
     def final_transition_wrap(**kwargs):
         img = kwargs["img"]
         txt = kwargs["txt"]
         return img[:, txt.shape[1]:, ...]
 
-    patch_blocks_after_transition_replace = patches_point.get(PatchKeys.dit_blocks_after_transition_replace)
+    patch_blocks_after_transition_replace = patches_insert.get(PatchKeys.dit_blocks_after_transition_replace)
     if patch_blocks_after_transition_replace is not None:
         img = patch_blocks_after_transition_replace({"img": img, "txt": txt, "vec": vec, "pe": pe},
-                                                    {
-                                                        "original_func": final_transition_wrap,
-                                                        "transformer_options": transformer_options
-                                                    })
+                                     {
+                                         "original_func": final_transition_wrap,
+                                         "transformer_options": transformer_options
+                                     })
     else:
         img = final_transition_wrap(img=img, txt=txt)
 
-    patches_final_layer_before = patches_point.get(PatchKeys.dit_final_layer_before, [])
+    patches_final_layer_before = patches_insert.get(PatchKeys.dit_final_layer_before, [])
     if patches_final_layer_before is not None and len(patches_final_layer_before) > 0:
         for patch_final_layer_before in patches_final_layer_before:
             img = patch_final_layer_before(img, txt, transformer_options)
 
     img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
 
-    patches_exit = patches_point.get(PatchKeys.dit_exit, [])
+    patches_exit = patches_insert.get(PatchKeys.dit_exit, [])
     if patches_exit is not None and len(patches_exit) > 0:
         for patch_exit in patches_exit:
             img = patch_exit(img, transformer_options)
 
-    del transformer_options[PatchKeys.running_net_model]
+    del transformer_options["running_net_model"]
 
     return img
 
 
-def flux_outer_sample_function_wrapper(wrapper_executor, noise, latent_image, sampler, sigmas, denoise_mask=None,
-                                  callback=None, disable_pbar=False, seed=None):
-    cfg_guider = wrapper_executor.class_obj
-    diffusion_model = cfg_guider.model_patcher.model.diffusion_model
-    # set hook
-    set_hook(diffusion_model, flux_forward_orig)
+def set_model_patch(model_patcher, options_key, patch, name):
+    to = model_patcher.model_options["transformer_options"]
+    if options_key not in to:
+        to[options_key] = {}
+    to[options_key][name] = to[options_key].get(name, []) + [patch]
 
-    try:
-        out = wrapper_executor(noise, latent_image, sampler, sigmas, denoise_mask=denoise_mask, callback=callback,
-                               disable_pbar=disable_pbar, seed=seed)
-    finally:
-        # cleanup hook
-        clean_hook(diffusion_model)
-    return out
+def set_model_patch_replace(model_patcher, options_key, patch, name):
+    to = model_patcher.model_options["transformer_options"]
+    if options_key not in to:
+        to[options_key] = {}
+    to[options_key][name] = patch
 
-def set_hook(diffusion_model, target_forward_orig):
-    diffusion_model.flux_old_forward_orig = types.MethodType(diffusion_model.forward_orig, diffusion_model)
-    diffusion_model.forward_orig = types.MethodType(target_forward_orig, diffusion_model)
-
-def clean_hook(diffusion_model):
-    if hasattr(diffusion_model, 'flux_old_forward_orig'):
-        diffusion_model.forward_orig = types.MethodType(diffusion_model.flux_old_forward_orig, diffusion_model)
-        del diffusion_model.flux_old_forward_orig
-
-class FluxForwardOverrider:
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "model": ("MODEL",),
-            }
-        }
-
-    RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("model",)
-    FUNCTION = "apply_patch"
-    CATEGORY = "patches/dit"
-
-    def apply_patch(self, model):
-
-        model = model.clone()
-        if isinstance(model.get_model_object('diffusion_model'), comfy.ldm.flux.model.Flux):
-            patch_key = "flux_forward_override_wrapper"
-            if len(model.get_wrappers(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE, patch_key)) == 0:
-                # Just add it once when connecting in series
-                model.add_wrapper_with_key(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
-                                           patch_key,
-                                           flux_outer_sample_function_wrapper
-                                           )
-        return (model, )
-
-
-NODE_CLASS_MAPPINGS = {
-    "FluxForwardOverrider": FluxForwardOverrider,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "FluxForwardOverrider": "FluxForwardOverrider",
-}
+def add_model_patch_option(model, patch_key):
+    if 'transformer_options' not in model.model_options:
+        model.model_options['transformer_options'] = {}
+    to = model.model_options['transformer_options']
+    if patch_key not in to:
+        to[patch_key] = {}
+    return to[patch_key]

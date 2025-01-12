@@ -1,6 +1,6 @@
 [English](README.md)
 
-添加一些钩子方法支持。例如支持`TeaCache`和`PulID-Flux`。
+添加一些钩子方法。例如使用`TeaCache`加速`PulID-Flux`、`Flux`、`混元视频`。
 
 ## 预览 (图片含工作流)
 ![save api extended](example/workflow_base.png)
@@ -15,15 +15,18 @@
 ```shell
     cd custom_nodes
     git clone https://github.com/lldacing/ComfyUI_Patches_ll.git
-    cd ComfyUI_Patches_ll
     # restart ComfyUI
 ```
 
 ## 节点
 - FluxForwardOverrider
   - 为`Flux`模型增加一些`hook`方法支持
+- VideoForwardOverrider
+  - 为视频模型添加一些`hook`方法支持. 支持 `HunYuanVideo`
+- DitForwardOverrider
+  - 为Dit架构模型增加一些`hook`方法支持(自动识别模型类型). 支持 `Flux`, `HunYuanVideo`
 - ApplyTeaCachePatch
-  - 使用`FluxForwardOverrider`中支持的hook，支持`TeaCache`加速（目前仅支持`Flux`，后面会加视频相关)
+  - 使用`*ForwardOverrider`中支持的`hook`方法提供`TeaCache`加速，支持 `Flux`, `HunYuanVideo`
 
 ## 感谢
 
