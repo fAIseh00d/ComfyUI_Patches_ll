@@ -1,7 +1,7 @@
 [project]
 name = "comfyui_patches_ll"
 description = "Some patches for Flux|HunYuanVideo etc, support TeaCache, PuLID."
-version = "1.0.1"
+version = "1.0.2"
 license = {file = "LICENSE"}
 dependencies = []
 

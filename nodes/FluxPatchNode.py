@@ -263,12 +263,12 @@ def flux_outer_sample_function_wrapper(wrapper_executor, noise, latent_image, sa
     return out
 
 def set_hook(diffusion_model, target_forward_orig):
-    diffusion_model.flux_old_forward_orig = types.MethodType(diffusion_model.forward_orig, diffusion_model)
+    diffusion_model.flux_old_forward_orig = diffusion_model.forward_orig
     diffusion_model.forward_orig = types.MethodType(target_forward_orig, diffusion_model)
 
 def clean_hook(diffusion_model):
     if hasattr(diffusion_model, 'flux_old_forward_orig'):
-        diffusion_model.forward_orig = types.MethodType(diffusion_model.flux_old_forward_orig, diffusion_model)
+        diffusion_model.forward_orig = diffusion_model.flux_old_forward_orig
         del diffusion_model.flux_old_forward_orig
 
 class FluxForwardOverrider:

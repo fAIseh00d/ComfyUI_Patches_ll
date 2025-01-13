@@ -283,7 +283,7 @@ def hunyuan_outer_sample_function_wrapper(wrapper_executor, noise, latent_image,
 def set_hook(diffusion_model, target_forward_orig):
     # comfy.ldm.hunyuan_video.model.HunyuanVideo.video_old_forward_orig = comfy.ldm.hunyuan_video.model.HunyuanVideo.forward_orig
     # comfy.ldm.hunyuan_video.model.HunyuanVideo.forward_orig = hunyuan_forward_orig
-    diffusion_model.video_old_forward_orig = types.MethodType(diffusion_model.forward_orig, diffusion_model)
+    diffusion_model.video_old_forward_orig = diffusion_model.forward_orig
     diffusion_model.forward_orig = types.MethodType(target_forward_orig, diffusion_model)
 
 
@@ -293,7 +293,7 @@ def clean_hook(diffusion_model):
     #     comfy.ldm.hunyuan_video.model.HunyuanVideo.forward_orig = comfy.ldm.hunyuan_video.model.HunyuanVideo.video_old_forward_orig
     #     del comfy.ldm.hunyuan_video.model.HunyuanVideo.video_old_forward_orig
     if hasattr(diffusion_model, 'video_old_forward_orig'):
-        diffusion_model.forward_orig = types.MethodType(diffusion_model.video_old_forward_orig, diffusion_model)
+        diffusion_model.forward_orig = diffusion_model.video_old_forward_orig
         del diffusion_model.video_old_forward_orig
 
 
