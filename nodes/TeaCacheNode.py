@@ -1,19 +1,28 @@
 import numpy as np
 
 import comfy
-from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_model_patch_replace
+from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_model_patch_replace, \
+    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model
 
 tea_cache_key_attrs = "tea_cache_attr"
 coefficients_obj = {
     'Flux': [4.98651651e+02, -2.83781631e+02, 5.58554382e+01, -3.82021401e+00, 2.64230861e-01],
-    'HunYuanVideo': [7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02]
+    'HunYuanVideo': [7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02],
+    'LTXVideo': [2.14700694e+01, -1.28016453e+01, 2.31279151e+00, 7.92487521e-01, 9.69274326e-03]
 }
 
-def tea_cache_enter(img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask, transformer_options):
+def get_teacache_global_cache(transformer_options):
     diffusion_model = transformer_options.get(PatchKeys.running_net_model)
     if hasattr(diffusion_model, "flux_tea_cache"):
         tea_cache = getattr(diffusion_model, "flux_tea_cache", {})
         transformer_options[tea_cache_key_attrs] = tea_cache
+
+def tea_cache_enter_for_ltxvideo(x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale, transformer_options):
+    get_teacache_global_cache(transformer_options)
+    return x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale
+
+def tea_cache_enter(img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask, transformer_options):
+    get_teacache_global_cache(transformer_options)
     return img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask
 
 def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
@@ -29,10 +38,32 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
     # x, gate_msa, shift_mlp, scale_mlp, gate_mlp
     inp = img.clone()
     vec_ = vec.clone()
-    double_block_0 = real_model.double_blocks[0]
-    img_mod1, img_mod2 = double_block_0.img_mod(vec_)
-    modulated_inp = double_block_0.img_norm1(inp)
-    modulated_inp = (1 + img_mod1.scale) * modulated_inp + img_mod1.shift
+    if is_ltxv_video_model(real_model):
+        inp = comfy.ldm.common_dit.rms_norm(inp)
+        double_block_0 = real_model.transformer_blocks[0]
+        num_ada_params = double_block_0.scale_shift_table.shape[0]
+        ada_values = double_block_0.scale_shift_table[None, None] + vec_.reshape(img.shape[0], vec_.shape[1], num_ada_params, -1)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = ada_values.unbind(dim=2)
+        modulated_inp = inp * (1 + scale_msa) + shift_msa
+    else:
+        double_block_0 = real_model.double_blocks[0]
+        img_mod1, img_mod2 = double_block_0.img_mod(vec_)
+        modulated_inp = double_block_0.img_norm1(inp)
+        if is_hunyuan_video_model(real_model):
+            # if img_mod1.scale is None and img_mod1.shift is None:
+            #     pass
+            # elif img_mod1.shift is None:
+            #     modulated_inp = modulated_inp * (1 + img_mod1.scale)
+            # elif img_mod1.scale is None:
+            #     modulated_inp =  modulated_inp + img_mod1.shift
+            # else:
+            #     modulated_inp = modulated_inp * (1 + img_mod1.scale) + img_mod1.shift
+            if img_mod1.scale is not None:
+                modulated_inp = modulated_inp * (1 + img_mod1.scale)
+            if img_mod1.shift is not None:
+                modulated_inp = modulated_inp + img_mod1.shift
+        else:
+            modulated_inp = (1 + img_mod1.scale) * modulated_inp + img_mod1.shift
     if attrs['cnt'] == 0 or attrs['cnt'] == attrs['total_steps'] - 1:
         should_calc = True
         attrs['accumulated_rel_l1_distance'] = 0
@@ -141,7 +172,8 @@ class ApplyTeaCachePatch:
                                       "max": 5.0,
                                       "step": 0.01,
                                       "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
-                                                 "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup)"
+                                                 "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup).\n"
+                                                 "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup)."
                                   }),
             }
         }
@@ -155,11 +187,24 @@ class ApplyTeaCachePatch:
 
         model = model.clone()
         diffusion_model = model.get_model_object('diffusion_model')
-        diffusion_model = diffusion_model
-        if not isinstance(diffusion_model, comfy.ldm.flux.model.Flux) and not isinstance(diffusion_model, comfy.ldm.hunyuan_video.model.HunyuanVideo):
-            return model,
+        if not is_flux_model(diffusion_model) and not is_hunyuan_video_model(diffusion_model) and not is_ltxv_video_model(diffusion_model):
+            return (model,)
 
-        set_model_patch(model, PatchKeys.options_key, tea_cache_enter, PatchKeys.dit_enter)
+        tea_cache_attrs = add_model_patch_option(model, tea_cache_key_attrs)
+
+        tea_cache_attrs['rel_l1_thresh'] = rel_l1_thresh
+        if is_flux_model(diffusion_model):
+            tea_cache_attrs['coefficient_type'] = 'Flux'
+
+        elif is_hunyuan_video_model(diffusion_model):
+            tea_cache_attrs['coefficient_type'] = 'HunYuanVideo'
+
+        if is_ltxv_video_model(diffusion_model):
+            set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_ltxvideo, PatchKeys.dit_enter)
+            tea_cache_attrs['coefficient_type'] = 'LTXVideo'
+        else:
+            set_model_patch(model, PatchKeys.options_key, tea_cache_enter, PatchKeys.dit_enter)
+
         set_model_patch(model, PatchKeys.options_key, tea_cache_patch_blocks_before, PatchKeys.dit_blocks_before)
 
         set_model_patch_replace(model, PatchKeys.options_key, tea_cache_patch_double_blocks_replace, PatchKeys.dit_double_blocks_replace)
@@ -170,14 +215,6 @@ class ApplyTeaCachePatch:
         set_model_patch(model, PatchKeys.options_key, tea_cache_patch_final_transition_after, PatchKeys.dit_final_layer_before)
         set_model_patch(model, PatchKeys.options_key, tea_cache_patch_dit_exit, PatchKeys.dit_exit)
 
-
-        tea_cache_attrs = add_model_patch_option(model, tea_cache_key_attrs)
-        tea_cache_attrs['rel_l1_thresh'] = rel_l1_thresh
-        if isinstance(diffusion_model, comfy.ldm.flux.model.Flux):
-            tea_cache_attrs['coefficient_type'] = 'Flux'
-
-        elif isinstance(diffusion_model, comfy.ldm.hunyuan_video.model.HunyuanVideo):
-                tea_cache_attrs['coefficient_type'] = 'HunYuanVideo'
 
         patch_key = "tea_cache_wrapper"
         if len(model.get_wrappers(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE, patch_key)) == 0:

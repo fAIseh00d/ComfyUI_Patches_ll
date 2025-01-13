@@ -1,3 +1,6 @@
+import types
+import comfy
+
 class PatchKeys:
     ################## transformer_options patches ##################
     options_key = "patches_point"
@@ -36,3 +39,31 @@ def add_model_patch_option(model, patch_key):
     if patch_key not in to:
         to[patch_key] = {}
     return to[patch_key]
+
+
+def set_hook(diffusion_model, new_method_name, new_method, old_method_name='forward_orig'):
+    if new_method is not None:
+        setattr(diffusion_model, new_method_name, getattr(diffusion_model, old_method_name));
+        setattr(diffusion_model ,old_method_name, types.MethodType(new_method, diffusion_model))
+
+
+def clean_hook(diffusion_model, new_method_name, old_method_name='forward_orig"'):
+    if hasattr(diffusion_model, new_method_name):
+        setattr(diffusion_model, old_method_name, getattr(diffusion_model, new_method_name))
+        delattr(diffusion_model, new_method_name)
+
+
+def is_hunyuan_video_model(model):
+    if isinstance(model, comfy.ldm.hunyuan_video.model.HunyuanVideo):
+        return True
+    return False
+
+def is_ltxv_video_model(model):
+    if isinstance(model, comfy.ldm.lightricks.model.LTXVModel):
+        return True
+    return False
+
+def is_flux_model(model):
+    if isinstance(model, comfy.ldm.flux.model.Flux):
+        return True
+    return False

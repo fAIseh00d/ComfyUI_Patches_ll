@@ -1,6 +1,6 @@
 [English](README.md)
 
-添加一些钩子方法。例如使用`TeaCache`加速`PulID-Flux`、`Flux`、`混元视频`。
+添加一些钩子方法。例如使用`TeaCache`加速`PulID-Flux`、`Flux`、`混元视频`、`LTXVideo`。
 
 ## 预览 (图片含工作流)
 ![save api extended](example/workflow_base.png)
@@ -20,13 +20,13 @@
 
 ## 节点
 - FluxForwardOverrider
-  - 为`Flux`模型增加一些`hook`方法支持
+  - 为`Flux`模型增加一些`hook`方法
 - VideoForwardOverrider
-  - 为视频模型添加一些`hook`方法支持. 支持 `HunYuanVideo`
+  - 为视频模型添加一些`hook`方法. 支持 `HunYuanVideo`、 `LTXVideo`
 - DitForwardOverrider
-  - 为Dit架构模型增加一些`hook`方法支持(自动识别模型类型). 支持 `Flux`, `HunYuanVideo`
+  - 为Dit架构模型增加一些`hook`方法(自动识别模型类型). 支持 `Flux`、 `HunYuanVideo`、 `LTXVideo`
 - ApplyTeaCachePatch
-  - 使用`*ForwardOverrider`中支持的`hook`方法提供`TeaCache`加速，支持 `Flux`, `HunYuanVideo`
+  - 使用`*ForwardOverrider`中支持的`hook`方法提供`TeaCache`加速，支持 `Flux`、 `HunYuanVideo`、 `LTXVideo`
 
 ## 感谢
 
