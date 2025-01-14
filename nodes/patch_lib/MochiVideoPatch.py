@@ -2,6 +2,7 @@ from typing import List, Dict
 
 import torch
 from einops import rearrange
+import torch.nn.functional as F
 
 from ..patch_util import PatchKeys
 
@@ -63,7 +64,7 @@ def mochi_forward(
     def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
         running_net_model = transformer_options[PatchKeys.running_net_model]
         blocks_replace = patches_replace.get("dit", {})
-        num_tokens = transformer_options["db_blocks_num_tokens"]
+        _num_tokens = transformer_options["db_blocks_num_tokens"]
         for i, block in enumerate(running_net_model.blocks):
             if ("double_block", i) in blocks_replace:
                 def block_wrap(args):
@@ -82,7 +83,7 @@ def mochi_forward(
                                                            "pe": pe,
                                                            "rope_cos" : pe[0],
                                                            "rope_sin" : pe[1],
-                                                           "crop_y" : num_tokens
+                                                           "crop_y" : _num_tokens
                                                            },
                                                           {
                                                               "original_block": block_wrap,
@@ -96,7 +97,7 @@ def mochi_forward(
                                  txt,
                                  rope_cos=pe[0],
                                  rope_sin=pe[1],
-                                 crop_y=num_tokens)  # (B, M, D), (B, L, D)
+                                 crop_y=_num_tokens)  # (B, M, D), (B, L, D)
 
         return img, txt
 
@@ -136,8 +137,8 @@ def mochi_forward(
     patch_blocks_transition = patches_point.get(PatchKeys.dit_blocks_transition_replace)
 
     def blocks_transition_wrap(**kwargs):
-        x = kwargs["img"]
-        return x
+        img = kwargs["img"]
+        return img
 
     if patch_blocks_transition is not None:
         x = patch_blocks_transition({"img": x, "txt": y_feat, "vec": c, "pe": pe},
@@ -186,27 +187,36 @@ def mochi_forward(
             x, y_feat = blocks_after(x, y_feat, transformer_options)
 
     def final_transition_wrap(**kwargs):
+        # pipe => x = normal_out(x)
         img = kwargs["img"]
+        _c = kwargs["vec"]
+        temp_model = transformer_options[PatchKeys.running_net_model]
+        shift, scale = temp_model.final_layer.mod(F.silu(_c)).chunk(2, dim=1)
+        # comfyui => x = modulate(self.norm_final(x), shift, scale)
+        img = temp_model.final_layer.norm_final(img) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        del temp_model
         return img
 
     patch_blocks_after_transition_replace = patches_point.get(PatchKeys.dit_blocks_after_transition_replace)
     if patch_blocks_after_transition_replace is not None:
-        img = patch_blocks_after_transition_replace({"img": x, "txt": y_feat, "vec": c, "pe": pe},
+        x = patch_blocks_after_transition_replace({"img": x, "txt": y_feat, "vec": c, "pe": pe},
                                                     {
                                                         "original_func": final_transition_wrap,
                                                         "transformer_options": transformer_options
                                                     })
     else:
-        img = final_transition_wrap(img=x, txt=y_feat)
+        x = final_transition_wrap(img=x, txt=y_feat, vec=c)
 
     patches_final_layer_before = patches_point.get(PatchKeys.dit_final_layer_before, [])
     if patches_final_layer_before is not None and len(patches_final_layer_before) > 0:
         for patch_final_layer_before in patches_final_layer_before:
-            img = patch_final_layer_before(img, y_feat, transformer_options)
+            x = patch_final_layer_before(x, y_feat, transformer_options)
 
     del y_feat
 
-    x = self.final_layer(x, c)  # (B, M, patch_size ** 2 * out_channels)
+    # pipe => x = proj_out(x)
+    x = self.final_layer.linear(x)  # (B, M, patch_size ** 2 * out_channels)
+    # x = self.final_layer(x, c)  # (B, M, patch_size ** 2 * out_channels)
     x = rearrange(
         x,
         "B (T hp wp) (p1 p2 c) -> B c T (hp p1) (wp p2)",
