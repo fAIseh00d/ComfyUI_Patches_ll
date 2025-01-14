@@ -1,6 +1,6 @@
 [中文文档](README_CN.md)
 
-Add some hooks method. Such as: `TeaCache` for `PuLID-Flux|Flux|HunYuanVideo|LTXVideo`.
+Add some hooks method. Such as: `TeaCache` for `PuLID-Flux` `Flux` `HunYuanVideo` `LTXVideo` `MochiVideo`.
 
 ## Preview (Image with WorkFlow)
 ![save api extended](example/workflow_base.png)
@@ -22,11 +22,11 @@ Working with `PuLID` (need my other custom nodes [ComfyUI_PuLID_Flux_ll](https:/
 - FluxForwardOverrider
   - Add some hooks method support to the `Flux` model
 - VideoForwardOverrider
-  - Add some hooks method support to the video model. Support `HunYuanVideo`, `LTXVideo`
+  - Add some hooks method support to the video model. Support `HunYuanVideo`, `LTXVideo`, `MochiVideo`
 - DitForwardOverrider
-  - Auto add some hooks method for model (automatically identify model type). Support `Flux`, `HunYuanVideo`, `LTXVideo`
+  - Auto add some hooks method for model (automatically identify model type). Support `Flux`, `HunYuanVideo`, `LTXVideo`, `MochiVideo`
 - ApplyTeaCachePatch
-  - Use the `hooks` provided in `*ForwardOverrider` to support `TeaCache` acceleration. Support `Flux`, `HunYuanVideo`, `LTXVideo`
+  - Use the `hooks` provided in `*ForwardOverrider` to support `TeaCache` acceleration. Support `Flux`, `HunYuanVideo`, `LTXVideo`, `MochiVideo`
 
 ## Thanks
 

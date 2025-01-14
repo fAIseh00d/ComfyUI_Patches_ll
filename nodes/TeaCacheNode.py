@@ -1,14 +1,16 @@
 import numpy as np
+import torch.nn.functional as F
 
 import comfy
 from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_model_patch_replace, \
-    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model
+    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model, is_mochi_video_model
 
 tea_cache_key_attrs = "tea_cache_attr"
 coefficients_obj = {
     'Flux': [4.98651651e+02, -2.83781631e+02, 5.58554382e+01, -3.82021401e+00, 2.64230861e-01],
     'HunYuanVideo': [7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02],
-    'LTXVideo': [2.14700694e+01, -1.28016453e+01, 2.31279151e+00, 7.92487521e-01, 9.69274326e-03]
+    'LTXVideo': [2.14700694e+01, -1.28016453e+01, 2.31279151e+00, 7.92487521e-01, 9.69274326e-03],
+    'MochiVideo': [-3.51241319e+03,  8.11675948e+02, -6.09400215e+01,  2.42429681e+00, 3.05291719e-03]
 }
 
 def get_teacache_global_cache(transformer_options):
@@ -17,10 +19,15 @@ def get_teacache_global_cache(transformer_options):
         tea_cache = getattr(diffusion_model, "flux_tea_cache", {})
         transformer_options[tea_cache_key_attrs] = tea_cache
 
+def tea_cache_enter_for_mochivideo(x, timestep, context, attention_mask, num_tokens, transformer_options):
+    get_teacache_global_cache(transformer_options)
+    return x, timestep, context, attention_mask, num_tokens
+
 def tea_cache_enter_for_ltxvideo(x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale, transformer_options):
     get_teacache_global_cache(transformer_options)
     return x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale
 
+# For Flux and HunYuanVideo
 def tea_cache_enter(img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask, transformer_options):
     get_teacache_global_cache(transformer_options)
     return img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask
@@ -29,22 +36,22 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
     real_model = transformer_options[PatchKeys.running_net_model]
     attrs = transformer_options.get(tea_cache_key_attrs, {})
 
-    # tea cache src code
-    # if self.emb is not None:
-    #     emb = self.emb(timestep, class_labels, hidden_dtype=hidden_dtype)
-    # emb = self.linear(self.silu(emb))
-    # shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = emb.chunk(6, dim=1)
-    # x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
-    # x, gate_msa, shift_mlp, scale_mlp, gate_mlp
     inp = img.clone()
     vec_ = vec.clone()
     if is_ltxv_video_model(real_model):
-        inp = comfy.ldm.common_dit.rms_norm(inp)
+        modulated_inp = comfy.ldm.common_dit.rms_norm(inp)
         double_block_0 = real_model.transformer_blocks[0]
         num_ada_params = double_block_0.scale_shift_table.shape[0]
         ada_values = double_block_0.scale_shift_table[None, None] + vec_.reshape(img.shape[0], vec_.shape[1], num_ada_params, -1)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = ada_values.unbind(dim=2)
-        modulated_inp = inp * (1 + scale_msa) + shift_msa
+        modulated_inp = modulated_inp * (1 + scale_msa) + shift_msa
+    elif is_mochi_video_model(real_model):
+        double_block_0 = real_model.blocks[0]
+        mod_x = double_block_0.mod_x(F.silu(vec_))
+        scale_msa_x, gate_msa_x, scale_mlp_x, gate_mlp_x = mod_x.chunk(4, dim=1)
+        # copied from comfy.ldm.genmo.joint_model.asymm_models_joint.modulated_rmsnorm
+        modulated_inp = comfy.ldm.common_dit.rms_norm(inp)
+        modulated_inp = modulated_inp * (1 + scale_msa_x.unsqueeze(1))
     else:
         double_block_0 = real_model.double_blocks[0]
         img_mod1, img_mod2 = double_block_0.img_mod(vec_)
@@ -63,6 +70,7 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
             if img_mod1.shift is not None:
                 modulated_inp = modulated_inp + img_mod1.shift
         else:
+            # Flux
             modulated_inp = (1 + img_mod1.scale) * modulated_inp + img_mod1.shift
     if attrs['cnt'] == 0 or attrs['cnt'] == attrs['total_steps'] - 1:
         should_calc = True
@@ -173,7 +181,8 @@ class ApplyTeaCachePatch:
                                       "step": 0.01,
                                       "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
                                                  "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup).\n"
-                                                 "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup)."
+                                                 "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup).\n"
+                                                 "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup)."
                                   }),
             }
         }
@@ -182,12 +191,15 @@ class ApplyTeaCachePatch:
     RETURN_NAMES = ("model",)
     FUNCTION = "apply_patch"
     CATEGORY = "patches/speed"
+    DESCRIPTION = ("Apply the TeaCache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
+                   "<br/> This is effective only for Flux, HunYuanVideo, LTXVideo, and MochiVideo.")
 
     def apply_patch(self, model, rel_l1_thresh):
 
         model = model.clone()
         diffusion_model = model.get_model_object('diffusion_model')
-        if not is_flux_model(diffusion_model) and not is_hunyuan_video_model(diffusion_model) and not is_ltxv_video_model(diffusion_model):
+        if not is_flux_model(diffusion_model) and not is_hunyuan_video_model(diffusion_model) and not is_ltxv_video_model(diffusion_model)\
+                and not is_mochi_video_model(diffusion_model):
             return (model,)
 
         tea_cache_attrs = add_model_patch_option(model, tea_cache_key_attrs)
@@ -202,6 +214,9 @@ class ApplyTeaCachePatch:
         if is_ltxv_video_model(diffusion_model):
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_ltxvideo, PatchKeys.dit_enter)
             tea_cache_attrs['coefficient_type'] = 'LTXVideo'
+        elif is_mochi_video_model(diffusion_model):
+            set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_mochivideo, PatchKeys.dit_enter)
+            tea_cache_attrs['coefficient_type'] = 'MochiVideo'
         else:
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter, PatchKeys.dit_enter)
 

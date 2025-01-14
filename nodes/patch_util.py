@@ -67,3 +67,8 @@ def is_flux_model(model):
     if isinstance(model, comfy.ldm.flux.model.Flux):
         return True
     return False
+
+def is_mochi_video_model(model):
+    if isinstance(model, comfy.ldm.genmo.joint_model.asymm_models_joint.AsymmDiTJoint):
+        return True
+    return False

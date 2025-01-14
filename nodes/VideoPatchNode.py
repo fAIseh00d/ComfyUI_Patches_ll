@@ -1,5 +1,5 @@
 import comfy
-from .patch_util import set_hook, clean_hook, is_hunyuan_video_model, is_ltxv_video_model
+from .patch_util import set_hook, clean_hook, is_hunyuan_video_model, is_ltxv_video_model, is_mochi_video_model
 from .node_utils import get_new_forward_orig, get_old_method_name
 
 
@@ -38,7 +38,7 @@ class VideoForwardOverrider:
     def apply_patch(self, model):
         model = model.clone()
         diffusion_model = model.get_model_object('diffusion_model')
-        if is_hunyuan_video_model(diffusion_model) or is_ltxv_video_model(diffusion_model):
+        if is_hunyuan_video_model(diffusion_model) or is_ltxv_video_model(diffusion_model) or is_mochi_video_model(diffusion_model):
             patch_key = "video_forward_override_wrapper"
             if len(model.get_wrappers(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE, patch_key)) == 0:
                 # Just add it once when connecting in series

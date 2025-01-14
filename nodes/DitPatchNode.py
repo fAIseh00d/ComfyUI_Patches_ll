@@ -1,7 +1,7 @@
 import comfy
 from .VideoPatchNode import video_outer_sample_function_wrapper
 from .FluxPatchNode import flux_outer_sample_function_wrapper
-from .patch_util import is_flux_model, is_hunyuan_video_model, is_ltxv_video_model
+from .patch_util import is_flux_model, is_hunyuan_video_model, is_ltxv_video_model, is_mochi_video_model
 
 
 class DitForwardOverrider:
@@ -18,7 +18,7 @@ class DitForwardOverrider:
     RETURN_NAMES = ("model",)
     FUNCTION = "apply_patch"
     CATEGORY = "patches/dit"
-    DESCRIPTION = "Support Flux, HunYuanVideo"
+    DESCRIPTION = "Support Flux, HunYuanVideo, LTXVideo, MochiVideo"
 
     def apply_patch(self, model):
 
@@ -32,7 +32,7 @@ class DitForwardOverrider:
                                            patch_key,
                                            flux_outer_sample_function_wrapper
                                            )
-        elif is_hunyuan_video_model(diffusion_model) or is_ltxv_video_model(diffusion_model):
+        elif is_hunyuan_video_model(diffusion_model) or is_ltxv_video_model(diffusion_model) or is_mochi_video_model(diffusion_model):
             if len(model.get_wrappers(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE, patch_key)) == 0:
                 # Just add it once when connecting in series
                 model.add_wrapper_with_key(comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
