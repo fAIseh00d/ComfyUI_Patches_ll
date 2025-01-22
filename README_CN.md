@@ -2,6 +2,8 @@
 
 添加一些钩子方法。例如支持`TeaCache`和`First Block Cache`加速`PulID-Flux`、`Flux`、`混元视频`、`LTXVideo`、`MochiVideo`。
 
+ComfyUI主体版本需要>=0.3.7
+
 ## 预览 (图片含工作流)
 ![save api extended](example/workflow_base.png)
 

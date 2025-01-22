@@ -2,6 +2,8 @@
 
 Add some hooks method. Such as: `TeaCache` and `First Block Cache` for `PuLID-Flux` `Flux` `HunYuanVideo` `LTXVideo` `MochiVideo`.
 
+Need upgrade ComfyUI Version>=0.3.7
+
 ## Preview (Image with WorkFlow)
 ![save api extended](example/workflow_base.png)
 
