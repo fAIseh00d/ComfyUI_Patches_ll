@@ -132,7 +132,7 @@ def fb_cache_prepare_wrapper(wrapper_executor, noise, latent_image, sampler, sig
     finally:
         diffusion_model = cfg_guider.model_patcher.model.diffusion_model
         if hasattr(diffusion_model, fb_cache_model_temp):
-            del diffusion_model[fb_cache_model_temp]
+            delattr(diffusion_model, fb_cache_model_temp)
 
     return out
 
