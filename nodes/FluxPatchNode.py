@@ -1,6 +1,5 @@
 import comfy
-from .VideoPatchNode import get_new_forward_orig
-from .node_utils import get_old_method_name
+from .node_utils import get_old_method_name, get_new_forward_orig
 from .patch_util import set_hook, clean_hook, is_flux_model
 
 def flux_outer_sample_function_wrapper(wrapper_executor, noise, latent_image, sampler, sigmas, denoise_mask=None,

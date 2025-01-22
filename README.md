@@ -1,6 +1,6 @@
 [中文文档](README_CN.md)
 
-Add some hooks method. Such as: `TeaCache` for `PuLID-Flux` `Flux` `HunYuanVideo` `LTXVideo` `MochiVideo`.
+Add some hooks method. Such as: `TeaCache` and `First Block Cache` for `PuLID-Flux` `Flux` `HunYuanVideo` `LTXVideo` `MochiVideo`.
 
 ## Preview (Image with WorkFlow)
 ![save api extended](example/workflow_base.png)
@@ -27,7 +27,17 @@ Working with `PuLID` (need my other custom nodes [ComfyUI_PuLID_Flux_ll](https:/
   - Auto add some hooks method for model (automatically identify model type). Support `Flux`, `HunYuanVideo`, `LTXVideo`, `MochiVideo`
 - ApplyTeaCachePatch
   - Use the `hooks` provided in `*ForwardOverrider` to support `TeaCache` acceleration. Support `Flux`, `HunYuanVideo`, `LTXVideo`, `MochiVideo`
+  - In my test results, the video quality is not good after acceleration for `MochiVideo`
+- ApplyTeaCachePatchAdvanced
+  - Support `start_at` and `end_at`
+- ApplyFirstBlockCachePatch
+  - Use the `hooks` provided in `*ForwardOverrider` to support `First Block Cache` acceleration. Support `Flux`, `HunYuanVideo`, `LTXVideo`, `MochiVideo`
+  - In my test results, the video quality is not good after acceleration for `MochiVideo`
+- ApplyFirstBlockCachePatchAdvanced
+  - Support `start_at` and `end_at`
 
 ## Thanks
 
 [TeaCache](https://github.com/ali-vilab/TeaCache)
+[ParaAttention](https://github.com/chengzeyi/ParaAttention)
+[Comfy-WaveSpeed](https://github.com/chengzeyi/Comfy-WaveSpeed)

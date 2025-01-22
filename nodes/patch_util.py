@@ -9,6 +9,7 @@ class PatchKeys:
     dit_enter = "patch_dit_enter"
     dit_blocks_before = "patch_dit_blocks_before"
     dit_double_blocks_replace = "patch_dit_double_blocks_replace"
+    dit_double_block_with_control_replace = "patch_dit_double_block_with_control_replace"
     dit_double_blocks_after = "patch_dit_double_blocks_after"
     dit_blocks_transition_replace = "patch_dit_blocks_transition_replace"
     dit_single_blocks_before = "patch_dit_single_blocks_before"

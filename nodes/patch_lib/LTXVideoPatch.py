@@ -110,31 +110,35 @@ def ltx_forward_orig(
 
     def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
         running_net_model = transformer_options[PatchKeys.running_net_model]
+        patch_double_blocks_with_control_replace = patches_point.get(PatchKeys.dit_double_block_with_control_replace)
         for i, block in enumerate(running_net_model.transformer_blocks):
-            if ("double_block", i) in blocks_replace:
-                def block_wrap(args):
-                    out = {}
-                    out["img"] = block(x=args["img"],
-                                       context=args["txt"],
-                                       timestep=args["vec"],
-                                       pe=args["pe"],
-                                       attention_mask=args.get("attention_mask"))
-                    return out
-
-                out = blocks_replace[("double_block", i)]({"img": img,
-                                                           "txt": txt,
-                                                           "vec": vec,
-                                                           "pe": pe,
-                                                           "attention_mask": attn_mask,
-                                                           },
-                                                          {
-                                                              "original_block": block_wrap,
-                                                              "transformer_options": transformer_options
-                                                          })
-                img = out["img"]
+            if patch_double_blocks_with_control_replace is not None:
+                img, txt = patch_double_blocks_with_control_replace({'i': i,
+                                                                     'block': block,
+                                                                     'img': img,
+                                                                     'txt': txt,
+                                                                     'vec': vec,
+                                                                     'pe': pe,
+                                                                     'control': control,
+                                                                     'attn_mask': attn_mask
+                                                                     },
+                                                                    {
+                                                                        "original_func": double_block_and_control_replace,
+                                                                        "transformer_options": transformer_options
+                                                                    })
             else:
-                img = block(x=img, context=txt, timestep=vec, pe=pe, attention_mask=attn_mask)
+                img, txt = double_block_and_control_replace(i=i,
+                                                            block=block,
+                                                            img=img,
+                                                            txt=txt,
+                                                            vec=vec,
+                                                            pe=pe,
+                                                            control=control,
+                                                            attn_mask=attn_mask,
+                                                            transformer_options=transformer_options
+                                                            )
 
+        del patch_double_blocks_with_control_replace
         return img, txt
 
     patch_double_blocks_replace = patches_point.get(PatchKeys.dit_double_blocks_replace)
@@ -268,3 +272,31 @@ def ltx_forward_orig(
     del transformer_options[PatchKeys.running_net_model]
 
     return x
+
+def double_block_and_control_replace(i, block, img, txt=None, vec=None, pe=None, control=None, attn_mask=None, transformer_options={}):
+    blocks_replace = transformer_options.get("patches_replace", {}).get("dit", {})
+    if ("double_block", i) in blocks_replace:
+        def block_wrap(args):
+            out = {}
+            out["img"] = block(x=args["img"],
+                               context=args["txt"],
+                               timestep=args["vec"],
+                               pe=args["pe"],
+                               attention_mask=args.get("attention_mask"))
+            return out
+
+        out = blocks_replace[("double_block", i)]({"img": img,
+                                                   "txt": txt,
+                                                   "vec": vec,
+                                                   "pe": pe,
+                                                   "attention_mask": attn_mask,
+                                                   },
+                                                  {
+                                                      "original_block": block_wrap,
+                                                      "transformer_options": transformer_options
+                                                  })
+        img = out["img"]
+    else:
+        img = block(x=img, context=txt, timestep=vec, pe=pe, attention_mask=attn_mask)
+
+    return img, txt

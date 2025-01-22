@@ -46,9 +46,8 @@ def hunyuan_forward_orig(
     vec = vec + self.vector_in(y[:, :self.params.vec_in_dim])
 
     if self.params.guidance_embed:
-        if guidance is None:
-            raise ValueError("Didn't get guidance strength for guidance distilled model.")
-        vec = vec + self.guidance_in(timestep_embedding(guidance, 256).to(img.dtype))
+        if guidance is not None:
+            vec = vec + self.guidance_in(timestep_embedding(guidance, 256).to(img.dtype))
 
     if txt_mask is not None and not torch.is_floating_point(txt_mask):
         txt_mask = (txt_mask - 1).to(img.dtype) * torch.finfo(img.dtype).max
@@ -75,39 +74,35 @@ def hunyuan_forward_orig(
 
     def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
         running_net_model = transformer_options[PatchKeys.running_net_model]
+        patch_double_blocks_with_control_replace = patches_point.get(PatchKeys.dit_double_block_with_control_replace)
         for i, block in enumerate(running_net_model.double_blocks):
-            if ("double_block", i) in blocks_replace:
-                def block_wrap(args):
-                    out = {}
-                    out["img"], out["txt"] = block(img=args["img"],
-                                                   txt=args["txt"],
-                                                   vec=args["vec"],
-                                                   pe=args["pe"],
-                                                   attn_mask=args.get("attention_mask"))
-                    return out
-
-                out = blocks_replace[("double_block", i)]({"img": img,
-                                                           "txt": txt,
-                                                           "vec": vec,
-                                                           "pe": pe,
-                                                           "attention_mask": attn_mask
-                                                           },
-                                                          {
-                                                              "original_block": block_wrap,
-                                                              "transformer_options": transformer_options
-                                                          })
-                txt = out["txt"]
-                img = out["img"]
+            if patch_double_blocks_with_control_replace is not None:
+                img, txt = patch_double_blocks_with_control_replace({'i': i,
+                                                                     'block': block,
+                                                                     'img': img,
+                                                                     'txt': txt,
+                                                                     'vec': vec,
+                                                                     'pe': pe,
+                                                                     'control': control,
+                                                                     'attn_mask': attn_mask
+                                                                     },
+                                                                    {
+                                                                        "original_func": double_block_and_control_replace,
+                                                                        "transformer_options": transformer_options
+                                                                    })
             else:
-                img, txt = block(img=img, txt=txt, vec=vec, pe=pe, attn_mask=attn_mask)
+                img, txt = double_block_and_control_replace(i=i,
+                                                            block=block,
+                                                            img=img,
+                                                            txt=txt,
+                                                            vec=vec,
+                                                            pe=pe,
+                                                            control=control,
+                                                            attn_mask=attn_mask,
+                                                            transformer_options=transformer_options
+                                                            )
 
-            if control is not None:  # Controlnet
-                control_i = control.get("input")
-                if i < len(control_i):
-                    add = control_i[i]
-                    if add is not None:
-                        img += add
-
+        del patch_double_blocks_with_control_replace
         return img, txt
 
     patch_double_blocks_replace = patches_point.get(PatchKeys.dit_double_blocks_replace)
@@ -259,3 +254,38 @@ def hunyuan_forward_orig(
     del transformer_options[PatchKeys.running_net_model]
 
     return img
+
+def double_block_and_control_replace(i, block, img, txt=None, vec=None, pe=None, control=None, attn_mask=None, transformer_options={}):
+    blocks_replace = transformer_options.get("patches_replace", {}).get("dit", {})
+    if ("double_block", i) in blocks_replace:
+        def block_wrap(args):
+            out = {}
+            out["img"], out["txt"] = block(img=args["img"],
+                                           txt=args["txt"],
+                                           vec=args["vec"],
+                                           pe=args["pe"],
+                                           attn_mask=args.get("attention_mask"))
+            return out
+
+        out = blocks_replace[("double_block", i)]({"img": img,
+                                                   "txt": txt,
+                                                   "vec": vec,
+                                                   "pe": pe,
+                                                   "attention_mask": attn_mask
+                                                   },
+                                                  {
+                                                      "original_block": block_wrap,
+                                                      "transformer_options": transformer_options
+                                                  })
+        txt = out["txt"]
+        img = out["img"]
+    else:
+        img, txt = block(img=img, txt=txt, vec=vec, pe=pe, attn_mask=attn_mask)
+    if control is not None:  # Controlnet
+        control_i = control.get("input")
+        if i < len(control_i):
+            add = control_i[i]
+            if add is not None:
+                img += add
+
+    return img, txt
