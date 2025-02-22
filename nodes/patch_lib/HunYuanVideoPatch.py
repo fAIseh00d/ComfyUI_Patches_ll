@@ -244,7 +244,7 @@ def hunyuan_forward_orig(
         shape[i] = shape[i] // self.patch_size[i]
     img = img.reshape([img.shape[0]] + shape + [self.out_channels] + self.patch_size)
     img = img.permute(0, 4, 1, 5, 2, 6, 3, 7)
-    img = img.reshape(initial_shape)
+    img = img.reshape(initial_shape[0], self.out_channels, initial_shape[2], initial_shape[3], initial_shape[4])
 
     patches_exit = patches_point.get(PatchKeys.dit_exit, [])
     if patches_exit is not None and len(patches_exit) > 0:
