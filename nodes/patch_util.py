@@ -42,16 +42,16 @@ def add_model_patch_option(model, patch_key):
     return to[patch_key]
 
 
-def set_hook(diffusion_model, new_method_name, new_method, old_method_name='forward_orig'):
+def set_hook(diffusion_model, bak_method_name, new_method, old_method_name='forward_orig'):
     if new_method is not None:
-        setattr(diffusion_model, new_method_name, getattr(diffusion_model, old_method_name));
+        setattr(diffusion_model, bak_method_name, getattr(diffusion_model, old_method_name));
         setattr(diffusion_model ,old_method_name, types.MethodType(new_method, diffusion_model))
 
 
-def clean_hook(diffusion_model, new_method_name, old_method_name='forward_orig"'):
-    if hasattr(diffusion_model, new_method_name):
-        setattr(diffusion_model, old_method_name, getattr(diffusion_model, new_method_name))
-        delattr(diffusion_model, new_method_name)
+def clean_hook(diffusion_model, bak_method_name, old_method_name='forward_orig'):
+    if hasattr(diffusion_model, bak_method_name):
+        setattr(diffusion_model, old_method_name, getattr(diffusion_model, bak_method_name))
+        delattr(diffusion_model, bak_method_name)
 
 
 def is_hunyuan_video_model(model):
@@ -71,5 +71,10 @@ def is_flux_model(model):
 
 def is_mochi_video_model(model):
     if isinstance(model, comfy.ldm.genmo.joint_model.asymm_models_joint.AsymmDiTJoint):
+        return True
+    return False
+
+def is_wan_video_model(model):
+    if isinstance(model, comfy.ldm.wan.model.WanModel):
         return True
     return False

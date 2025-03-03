@@ -1,6 +1,8 @@
+import logging
+
 import comfy
 from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_model_patch_replace, \
-    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model, is_mochi_video_model
+    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model, is_mochi_video_model, is_wan_video_model
 
 fb_cache_key_attrs = "fb_cache_attr"
 fb_cache_model_temp = "flux_fb_cache"
@@ -13,6 +15,10 @@ def get_fb_cache_global_cache(transformer_options, timesteps):
 
     attrs = transformer_options.get(fb_cache_key_attrs, {})
     attrs['step_i'] = timesteps[0].detach().cpu().item()
+
+def fb_cache_enter_for_wanvideo(x, timestep, context, transformer_options):
+    get_fb_cache_global_cache(transformer_options, timestep)
+    return x, timestep, context
 
 def fb_cache_enter_for_mochivideo(x, timestep, context, attention_mask, num_tokens, transformer_options):
     get_fb_cache_global_cache(transformer_options, timestep)
@@ -152,7 +158,8 @@ class ApplyFirstBlockCachePatchAdvanced:
                                                 "tooltip": "Flux: 0 (original), 0.12 (1.8x speedup).\n"
                                                            "HunYuanVideo: 0 (original), 0.1 (1.6x speedup).\n"
                                                            "LTXVideo: 0 (original), 0.5 (1.2x speedup).\n"
-                                                           "MochiVideo: 0 (original), 0.03 (1.5x speedup)."
+                                                           "MochiVideo: 0 (original), 0.03 (1.5x speedup).\n"
+                                                           "WanVideo: 0 (original), 0.05 (1.5x speedup)."
                                             }),
                 "start_at": ("FLOAT",
                              {
@@ -177,7 +184,7 @@ class ApplyFirstBlockCachePatchAdvanced:
     FUNCTION = "apply_patch_advanced"
     CATEGORY = "patches/speed"
     DESCRIPTION = ("Apply the First Block Cache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
-                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, and MochiVideo.")
+                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, WanVideo and MochiVideo.")
 
     def apply_patch_advanced(self, model, residual_diff_threshold, start_at=0.0, end_at=1.0):
 
@@ -188,7 +195,8 @@ class ApplyFirstBlockCachePatchAdvanced:
 
         diffusion_model = model.get_model_object('diffusion_model')
         if not is_flux_model(diffusion_model) and not is_hunyuan_video_model(diffusion_model) and not is_ltxv_video_model(diffusion_model)\
-                and not is_mochi_video_model(diffusion_model):
+                and not is_mochi_video_model(diffusion_model) and not is_wan_video_model(diffusion_model):
+            logging.warning("First Block Cache patch is not applied because the model is not supported.")
             return (model,)
 
         fb_cache_attrs = add_model_patch_option(model, fb_cache_key_attrs)
@@ -204,6 +212,8 @@ class ApplyFirstBlockCachePatchAdvanced:
             set_model_patch(model, PatchKeys.options_key, fb_cache_enter_for_ltxvideo, PatchKeys.dit_enter)
         elif is_mochi_video_model(diffusion_model):
             set_model_patch(model, PatchKeys.options_key, fb_cache_enter_for_mochivideo, PatchKeys.dit_enter)
+        elif is_wan_video_model(diffusion_model):
+            set_model_patch(model, PatchKeys.options_key, fb_cache_enter_for_wanvideo, PatchKeys.dit_enter)
         else:
             set_model_patch(model, PatchKeys.options_key, fb_cache_enter, PatchKeys.dit_enter)
 
@@ -238,7 +248,8 @@ class ApplyFirstBlockCachePatch(ApplyFirstBlockCachePatchAdvanced):
                                                 "tooltip": "Flux: 0 (original), 0.12 (1.8x speedup).\n"
                                                            "HunYuanVideo: 0 (original), 0.1 (1.6x speedup).\n"
                                                            "LTXVideo: 0 (original), 0.05 (1.2x speedup).\n"
-                                                           "MochiVideo: 0 (original), 0.03 (1.5x speedup)."
+                                                           "MochiVideo: 0 (original), 0.03 (1.5x speedup).\n"
+                                                           "WanVideo: 0 (original), 0.05 (1.5x speedup)."
                                             })
             }
         }
@@ -248,7 +259,7 @@ class ApplyFirstBlockCachePatch(ApplyFirstBlockCachePatchAdvanced):
     FUNCTION = "apply_patch"
     CATEGORY = "patches/speed"
     DESCRIPTION = ("Apply the First Block Cache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
-                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, and MochiVideo.")
+                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, WanVideo and MochiVideo.")
 
     def apply_patch(self, model, residual_diff_threshold):
         return super().apply_patch_advanced(model, residual_diff_threshold, start_at=0.0, end_at=1.0)

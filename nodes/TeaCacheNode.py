@@ -1,16 +1,20 @@
+import logging
+
 import numpy as np
 import torch.nn.functional as F
 
 import comfy
 from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_model_patch_replace, \
-    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model, is_mochi_video_model
+    is_hunyuan_video_model, is_flux_model, is_ltxv_video_model, is_mochi_video_model, is_wan_video_model
 
 tea_cache_key_attrs = "tea_cache_attr"
 coefficients_obj = {
     'Flux': [4.98651651e+02, -2.83781631e+02, 5.58554382e+01, -3.82021401e+00, 2.64230861e-01],
     'HunYuanVideo': [7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02],
     'LTXVideo': [2.14700694e+01, -1.28016453e+01, 2.31279151e+00, 7.92487521e-01, 9.69274326e-03],
-    'MochiVideo': [-3.51241319e+03,  8.11675948e+02, -6.09400215e+01,  2.42429681e+00, 3.05291719e-03]
+    'MochiVideo': [-3.51241319e+03,  8.11675948e+02, -6.09400215e+01,  2.42429681e+00, 3.05291719e-03],
+    # 36 prompts + 30 steps(29 diff) + 33 frames in WanVideo_t2v_1.3B
+    'WanVideo': [730.4719264877012, -392.2347853907241, 73.89414656757954, -5.431648022687163, 0.5058813451253327],
 }
 
 def get_teacache_global_cache(transformer_options, timesteps):
@@ -21,6 +25,10 @@ def get_teacache_global_cache(transformer_options, timesteps):
     attrs = transformer_options.get(tea_cache_key_attrs, {})
     attrs['step_i'] = timesteps[0].detach().cpu().item()
     # print(str(attrs['step_i']))
+
+def tea_cache_enter_for_wanvideo(x, timestep, context, transformer_options):
+    get_teacache_global_cache(transformer_options, timestep)
+    return x, timestep, context
 
 def tea_cache_enter_for_mochivideo(x, timestep, context, attention_mask, num_tokens, transformer_options):
     get_teacache_global_cache(transformer_options, timestep)
@@ -64,6 +72,12 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
             # copied from comfy.ldm.genmo.joint_model.asymm_models_joint.modulated_rmsnorm
             modulated_inp = comfy.ldm.common_dit.rms_norm(inp)
             modulated_inp = modulated_inp * (1 + scale_msa_x.unsqueeze(1))
+        elif is_wan_video_model(real_model):
+            coefficient_type = 'WanVideo'
+            block_0 = real_model.blocks[0]
+            e_0 = (comfy.model_management.cast_to(block_0.modulation, dtype=inp.dtype, device=inp.device) + vec_).chunk(6, dim=1)
+
+            modulated_inp = block_0.norm1(inp) * (1 + e_0[1]) + e_0[0]
         else:
             double_block_0 = real_model.double_blocks[0]
             img_mod1, img_mod2 = double_block_0.img_mod(vec_)
@@ -198,7 +212,8 @@ class ApplyTeaCachePatchAdvanced:
                                       "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
                                                  "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup).\n"
                                                  "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup).\n"
-                                                 "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup)."
+                                                 "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup).\n"
+                                                 "WanVideo: 0 (original), 0.42 (1.5x speedup), 0.45 (1.85x speedup)."
                                   }),
                 "start_at": ("FLOAT",
                              {
@@ -222,7 +237,7 @@ class ApplyTeaCachePatchAdvanced:
     FUNCTION = "apply_patch_advanced"
     CATEGORY = "patches/speed"
     DESCRIPTION = ("Apply the TeaCache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
-                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, and MochiVideo.")
+                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, WanVideo and MochiVideo.")
 
     def apply_patch_advanced(self, model, rel_l1_thresh, start_at=0.0, end_at=1.0):
 
@@ -233,7 +248,8 @@ class ApplyTeaCachePatchAdvanced:
 
         diffusion_model = model.get_model_object('diffusion_model')
         if not is_flux_model(diffusion_model) and not is_hunyuan_video_model(diffusion_model) and not is_ltxv_video_model(diffusion_model)\
-                and not is_mochi_video_model(diffusion_model):
+                and not is_mochi_video_model(diffusion_model) and not is_wan_video_model(diffusion_model):
+            logging.warning("TeaCache patch is not applied because the model is not supported.")
             return (model,)
 
         tea_cache_attrs = add_model_patch_option(model, tea_cache_key_attrs)
@@ -249,6 +265,8 @@ class ApplyTeaCachePatchAdvanced:
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_ltxvideo, PatchKeys.dit_enter)
         elif is_mochi_video_model(diffusion_model):
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_mochivideo, PatchKeys.dit_enter)
+        elif is_wan_video_model(diffusion_model):
+            set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_wanvideo, PatchKeys.dit_enter)
         else:
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter, PatchKeys.dit_enter)
 
@@ -285,7 +303,8 @@ class ApplyTeaCachePatch(ApplyTeaCachePatchAdvanced):
                                       "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
                                                  "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup).\n"
                                                  "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup).\n"
-                                                 "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup)."
+                                                 "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup).\n"
+                                                 "WanVideo: 0 (original), 0.42 (1.5x speedup), 0.45 (1.85x speedup)."
                                   }),
             }
         }
@@ -295,7 +314,7 @@ class ApplyTeaCachePatch(ApplyTeaCachePatchAdvanced):
     FUNCTION = "apply_patch"
     CATEGORY = "patches/speed"
     DESCRIPTION = ("Apply the TeaCache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
-                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, and MochiVideo.")
+                   "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, WanVideo and MochiVideo.")
 
     def apply_patch(self, model, rel_l1_thresh):
 
