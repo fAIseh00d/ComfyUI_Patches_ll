@@ -38,8 +38,30 @@ Working with `PuLID` (need my other custom nodes [ComfyUI_PuLID_Flux_ll](https:/
 - ApplyFirstBlockCachePatchAdvanced
   - Support `start_at` and `end_at`
 
+## SpeedUp reference
+### TeaCache (rel_l1_thresh value)
+|              | Original | 1.5x | 1.8x | 2.0x |
+|--------------|----------|------|------|------|
+| Flux         | 0        | 0.25 | 0.4  | 0.6  |
+| HunYuanVideo | 0        | 0.1  | -    | 0.15 |
+| LTXVideo     | 0        | 0.03 | -    | 0.05 |
+| MochiVideo   | 0        | 0.06 | -    | 0.09 |
+| WanVideo     | 0        | 0.42 | 0.45 | -    |
+
+### First Block Cache (residual_diff_threshold value)
+|              | Original | 1.2x | 1.5x | 1.8x |
+|--------------|----------|------|------|------|
+| Flux         | 0        | -    | -    | 0.12 |
+| HunYuanVideo | 0        | -    | 0.1  | -    |
+| LTXVideo     | 0        | 0.05 | -    | -    |
+| MochiVideo   | 0        | -    | 0.03 | -    |
+| WanVideo     | 0        | -    | 0.05 | -    |
+
+Note: "-" indicates small speedup, low quality or untested.
+
+
 ## Thanks
 
-[TeaCache](https://github.com/ali-vilab/TeaCache)
-[ParaAttention](https://github.com/chengzeyi/ParaAttention)
+[TeaCache](https://github.com/ali-vilab/TeaCache)  
+[ParaAttention](https://github.com/chengzeyi/ParaAttention)  
 [Comfy-WaveSpeed](https://github.com/chengzeyi/Comfy-WaveSpeed)

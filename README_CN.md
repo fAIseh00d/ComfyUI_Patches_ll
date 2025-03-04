@@ -38,8 +38,29 @@ ComfyUI主体版本需要>=0.3.7
 - ApplyFirstBlockCachePatchAdvanced
   - 支持设置 `start_at` 和 `end_at`
 
+## 加速参考
+### TeaCache (rel_l1_thresh值)
+|              | 原始速度 | 1.5x | 1.8x | 2.0x |
+|--------------|------|------|------|------|
+| Flux         | 0    | 0.25 | 0.4  | 0.6  |
+| HunYuanVideo | 0    | 0.1  | -    | 0.15 |
+| LTXVideo     | 0    | 0.03 | -    | 0.05 |
+| MochiVideo   | 0    | 0.06 | -    | 0.09 |
+| WanVideo     | 0    | 0.42 | 0.45 | -    |
+
+### First Block Cache (residual_diff_threshold value)
+|              | 原始速度 | 1.2x | 1.5x | 1.8x |
+|--------------|------|------|------|------|
+| Flux         | 0    | -    | -    | 0.12 |
+| HunYuanVideo | 0    | -    | 0.1  | -    |
+| LTXVideo     | 0    | 0.05 | -    | -    |
+| MochiVideo   | 0    | -    | 0.03 | -    |
+| WanVideo     | 0    | -    | 0.05 | -    |
+
+注: "-" 表示加速不明显、低质量或未测试。
+
 ## 感谢
 
-[TeaCache](https://github.com/ali-vilab/TeaCache)
-[ParaAttention](https://github.com/chengzeyi/ParaAttention)
-[Comfy-WaveSpeed](https://github.com/chengzeyi/Comfy-WaveSpeed)
+[TeaCache](https://github.com/ali-vilab/TeaCache) 
+[ParaAttention](https://github.com/chengzeyi/ParaAttention) 
+[Comfy-WaveSpeed](https://github.com/chengzeyi/Comfy-WaveSpeed) 
