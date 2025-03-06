@@ -24,7 +24,7 @@ def wan_forward(self, x, timestep, context, clip_fea=None, **kwargs):
     img_ids = repeat(img_ids, "t h w c -> b (t h w) c", b=bs)
 
     freqs = self.rope_embedder(img_ids).movedim(1, 2)
-    return self.forward_orig(x, timestep, context, clip_fea=clip_fea, freqs=freqs, transformer_options=kwargs.get("transformer_options", {}))[:, :, :t, :h, :w]
+    return self.forward_orig(x, timestep, context, clip_fea=clip_fea, freqs=freqs, **kwargs)[:, :, :t, :h, :w]
 
 def wan_forward_orig(
     self,
@@ -36,7 +36,7 @@ def wan_forward_orig(
     transformer_options={},
     **kwargs
 ) -> Tensor:
-    patches_replace = transformer_options.get("patches_replace", {})
+    # patches_replace = transformer_options.get("patches_replace", {})
     patches_point = transformer_options.get(PatchKeys.options_key, {})
 
     transformer_options[PatchKeys.running_net_model] = self
@@ -44,7 +44,7 @@ def wan_forward_orig(
     patches_enter = patches_point.get(PatchKeys.dit_enter, [])
     if patches_enter is not None and len(patches_enter) > 0:
         for patch_enter in patches_enter:
-            x, timestep, context = patch_enter(
+            x, t, context = patch_enter(
                 x,
                 t,
                 context,
@@ -73,7 +73,7 @@ def wan_forward_orig(
     patch_blocks_before = patches_point.get(PatchKeys.dit_blocks_before, [])
     if patch_blocks_before is not None and len(patch_blocks_before) > 0:
         for blocks_before in patch_blocks_before:
-            x, context, timestep, ids, pe = blocks_before(img=x, txt=context, vec=e0, ids=None, pe=freqs, transformer_options=transformer_options)
+            x, context, e0, ids, freqs = blocks_before(img=x, txt=context, vec=e0, ids=None, pe=freqs, transformer_options=transformer_options, e=e)
 
     def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
         running_net_model = transformer_options[PatchKeys.running_net_model]
@@ -191,6 +191,7 @@ def wan_forward_orig(
 
     def final_transition_wrap(**kwargs):
         img = kwargs["img"]
+        # img = self.head.norm(img)
         return img
 
     patch_blocks_after_transition_replace = patches_point.get(PatchKeys.dit_blocks_after_transition_replace)
@@ -208,6 +209,8 @@ def wan_forward_orig(
         for patch_final_layer_before in patches_final_layer_before:
             x = patch_final_layer_before(img=x, txt=context, transformer_options=transformer_options)
 
+    # e = (comfy.model_management.cast_to(self.head.modulation, dtype=x.dtype, device=x.device) + e.unsqueeze(1)).chunk(2, dim=1)
+    # x = (self.head.head(x * (1 + e[1]) + e[0]))
     # head
     x = self.head(x, e)
 

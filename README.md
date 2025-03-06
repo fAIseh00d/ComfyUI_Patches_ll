@@ -46,7 +46,8 @@ Working with `PuLID` (need my other custom nodes [ComfyUI_PuLID_Flux_ll](https:/
 | HunYuanVideo | 0        | 0.1  | -    | 0.15 |
 | LTXVideo     | 0        | 0.03 | -    | 0.05 |
 | MochiVideo   | 0        | 0.06 | -    | 0.09 |
-| WanVideo     | 0        | 0.42 | 0.45 | -    |
+| WanVideo     | 0        | -    | -    | -    |
+Note: "-" indicates small speedup, low quality or untested. WanVideo's different models have different acceleration effects.
 
 ### First Block Cache (residual_diff_threshold value)
 |              | Original | 1.2x | 1.5x | 1.8x |

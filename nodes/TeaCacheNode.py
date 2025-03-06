@@ -8,13 +8,25 @@ from .patch_util import PatchKeys, add_model_patch_option, set_model_patch, set_
     is_hunyuan_video_model, is_flux_model, is_ltxv_video_model, is_mochi_video_model, is_wan_video_model
 
 tea_cache_key_attrs = "tea_cache_attr"
+# https://github.com/ali-vilab/TeaCache/blob/main/TeaCache4FLUX/teacache_flux.py
+# https://github.com/ali-vilab/TeaCache/blob/main/TeaCache4HunyuanVideo/teacache_sample_video.py
+# https://github.com/ali-vilab/TeaCache/blob/main/TeaCache4LTX-Video/teacache_ltx.py
+# https://github.com/ali-vilab/TeaCache/blob/main/TeaCache4Mochi/teacache_mochi.py
+# https://github.com/ali-vilab/TeaCache/blob/main/TeaCache4Wan2.1/teacache_generate.py
 coefficients_obj = {
     'Flux': [4.98651651e+02, -2.83781631e+02, 5.58554382e+01, -3.82021401e+00, 2.64230861e-01],
     'HunYuanVideo': [7.33226126e+02, -4.01131952e+02, 6.75869174e+01, -3.14987800e+00, 9.61237896e-02],
     'LTXVideo': [2.14700694e+01, -1.28016453e+01, 2.31279151e+00, 7.92487521e-01, 9.69274326e-03],
     'MochiVideo': [-3.51241319e+03,  8.11675948e+02, -6.09400215e+01,  2.42429681e+00, 3.05291719e-03],
-    # 100 prompts + 30 steps(29 diff) + 33 frames in WanVideo_t2v_1.3B
-    'WanVideo': [2337.2725448820943, -1115.0859732839863, 181.95799689350622, -11.506484961515016, 0.6124379402853622],
+    # Supports 480P
+    'WanVideo_t2v_1.3B': [2.39676752e+03, -1.31110545e+03,  2.01331979e+02, -8.29855975e+00, 1.37887774e-01],
+    # Supports both 480P and 720P
+    'WanVideo_t2v_14B': [-5784.54975374,  5449.50911966, -1811.16591783,   256.27178429, -13.02252404],
+    # Supports 480P
+    'WanVideo_i2v_14B_480P': [-3.02331670e+02,  2.23948934e+02, -5.25463970e+01,  5.87348440e+00, -2.01973289e-01],
+    # Supports 720P
+    'WanVideo_i2v_14B_720P': [-114.36346466,   65.26524496,  -18.82220707,    4.91518089,   -0.23412683],
+    'WanVideo_disabled': [],
 }
 
 def get_teacache_global_cache(transformer_options, timesteps):
@@ -26,24 +38,24 @@ def get_teacache_global_cache(transformer_options, timesteps):
     attrs['step_i'] = timesteps[0].detach().cpu().item()
     # print(str(attrs['step_i']))
 
-def tea_cache_enter_for_wanvideo(x, timestep, context, transformer_options):
+def tea_cache_enter_for_wanvideo(x, timestep, context, transformer_options, **kwargs):
     get_teacache_global_cache(transformer_options, timestep)
     return x, timestep, context
 
-def tea_cache_enter_for_mochivideo(x, timestep, context, attention_mask, num_tokens, transformer_options):
+def tea_cache_enter_for_mochivideo(x, timestep, context, attention_mask, num_tokens, transformer_options, **kwargs):
     get_teacache_global_cache(transformer_options, timestep)
     return x, timestep, context, attention_mask, num_tokens
 
-def tea_cache_enter_for_ltxvideo(x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale, transformer_options):
+def tea_cache_enter_for_ltxvideo(x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale, transformer_options, **kwargs):
     get_teacache_global_cache(transformer_options, timestep)
     return x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale
 
 # For Flux and HunYuanVideo
-def tea_cache_enter(img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask, transformer_options):
+def tea_cache_enter(img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask, transformer_options, **kwargs):
     get_teacache_global_cache(transformer_options, timesteps)
     return img, img_ids, txt, txt_ids, timesteps, y, guidance, control, attn_mask
 
-def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
+def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options, **kwargs):
     real_model = transformer_options[PatchKeys.running_net_model]
     attrs = transformer_options.get(tea_cache_key_attrs, {})
     step_i = attrs['step_i']
@@ -52,9 +64,22 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
     in_step = timestep_end <= step_i <= timestep_start
     # print(str(timestep_end)+' '+ str(step_i)+' '+str(timestep_start))
 
-    if attrs['rel_l1_thresh'] > 0 and in_step:
-        inp = img.clone()
-        vec_ = vec.clone()
+    # kijai版本TeaCache和TeaCache官方实现相结合在质量和速度上是最好的(即KJ-Nodes中的实现)
+    # TeaCache官方实现只计算了cond的accumulated_rel_l1_distance，没有计算uncond的accumulated_rel_l1_distance
+    accumulated_state = attrs.get('accumulated_state', {
+        "x": {'accumulated_rel_l1_distance': 0, 'previous_modulated_input': None, 'skipped_steps': 0, 'previous_residual': None},
+        'cond': {'accumulated_rel_l1_distance': 0, 'previous_modulated_input': None, 'skipped_steps': 0, 'previous_residual': None},
+        'uncond': {'accumulated_rel_l1_distance': 0, 'previous_modulated_input': None, 'skipped_steps': 0, 'previous_residual': None}
+    })
+    teacache_enabled = attrs['rel_l1_thresh'] > 0 and in_step
+    attrs['cache_enabled'] = teacache_enabled
+    current_state_type = 'x'
+    should_calc = True
+    if teacache_enabled:
+        inp = img
+        vec_ = vec
+        rescale_func_flag = True
+        # split_cnd_flag=True是生效
         coefficient_type = 'Flux'
         if is_ltxv_video_model(real_model):
             coefficient_type = 'LTXVideo'
@@ -73,11 +98,16 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
             modulated_inp = comfy.ldm.common_dit.rms_norm(inp)
             modulated_inp = modulated_inp * (1 + scale_msa_x.unsqueeze(1))
         elif is_wan_video_model(real_model):
-            coefficient_type = 'WanVideo'
-            block_0 = real_model.blocks[0]
-            e_0 = (comfy.model_management.cast_to(block_0.modulation, dtype=inp.dtype, device=inp.device) + vec_).chunk(6, dim=1)
-
-            modulated_inp = block_0.norm1(inp) * (1 + e_0[1]) + e_0[0]
+            coefficient_type = attrs.get("wan_coefficients_type", 'disabled')
+            if coefficient_type == 'disabled':
+                # e0
+                rescale_func_flag = False
+            else:
+                vec_ = kwargs.get('e')
+            modulated_inp = vec_
+            coefficient_type = 'WanVideo_' + coefficient_type
+            is_cond_flag = True if transformer_options["cond_or_uncond"] == [0] else False
+            current_state_type = 'cond' if is_cond_flag else 'uncond'
         else:
             double_block_0 = real_model.double_blocks[0]
             img_mod1, img_mod2 = double_block_0.img_mod(vec_)
@@ -99,28 +129,40 @@ def tea_cache_patch_blocks_before(img, txt, vec, ids, pe, transformer_options):
             else:
                 # Flux
                 modulated_inp = (1 + img_mod1.scale) * modulated_inp + img_mod1.shift
-        if attrs['cnt'] == 0 or attrs['cnt'] == attrs['total_steps'] - 1:
-            should_calc = True
-            attrs['accumulated_rel_l1_distance'] = 0
-        else:
-            coefficients = coefficients_obj[coefficient_type]
-            rescale_func = np.poly1d(coefficients)
-            attrs['accumulated_rel_l1_distance'] += rescale_func(((modulated_inp - attrs['previous_modulated_input']).abs().mean() / attrs['previous_modulated_input'].abs().mean()).cpu().item())
 
-            if attrs['accumulated_rel_l1_distance'] < attrs['rel_l1_thresh']:
+        current_state = accumulated_state[current_state_type]
+
+        if current_state.get('previous_modulated_input', None) is None or attrs['cnt'] == 0 or attrs['cnt'] == attrs['total_steps'] - 1:
+            should_calc = True
+            current_state['accumulated_rel_l1_distance'] = 0
+        else:
+            if rescale_func_flag:
+                coefficients = coefficients_obj[coefficient_type]
+                rescale_func = np.poly1d(coefficients)
+                current_state['accumulated_rel_l1_distance'] += rescale_func(((modulated_inp - current_state['previous_modulated_input']).abs().mean() / current_state['previous_modulated_input'].abs().mean()).cpu().item())
+            else:
+                current_state['accumulated_rel_l1_distance'] += ((modulated_inp - current_state['previous_modulated_input']).abs().mean() / current_state['previous_modulated_input'].abs().mean()).cpu().item()
+
+            if current_state['accumulated_rel_l1_distance'] < attrs['rel_l1_thresh']:
                 should_calc = False
             else:
                 should_calc = True
-                attrs['accumulated_rel_l1_distance'] = 0
-        attrs['previous_modulated_input'] = modulated_inp
+                current_state['accumulated_rel_l1_distance'] = 0
+
+        current_state['previous_modulated_input'] = modulated_inp.clone().detach()
+
         attrs['cnt'] += 1
         if attrs['cnt'] == attrs['total_steps']:
             attrs['cnt'] = 0
+        del inp, vec_
     else:
-        should_calc = True
+        # 设置了start_at场景需要初始化
+        if is_wan_video_model(real_model):
+            current_state_type = 'cond' if transformer_options["cond_or_uncond"] == [0] else 'uncond'
 
     attrs['should_calc'] = should_calc
-
+    attrs['accumulated_state'] = accumulated_state
+    attrs['current_state_type'] = current_state_type
     del real_model
     return img, txt, vec, ids, pe
 
@@ -129,12 +171,15 @@ def tea_cache_patch_double_blocks_replace(original_args, wrapper_options):
     txt = original_args['txt']
     transformer_options = wrapper_options.get('transformer_options', {})
     attrs = transformer_options.get(tea_cache_key_attrs, {})
-    should_calc = attrs.get('should_calc', True)
+
+    should_calc = not attrs.get('cache_enabled') or attrs.get('should_calc', True)
     if not should_calc:
-        img += attrs['previous_residual']
+        current_state = attrs['accumulated_state'][attrs['current_state_type']]
+        img += current_state['previous_residual'].to(img.device)
+        current_state['skipped_steps'] += 1
     else:
         # (b, seq_len, _)
-        attrs['ori_img'] = img.clone()
+        attrs['ori_img'] = img.clone().detach()
         img, txt = wrapper_options.get('original_blocks')(**original_args, transformer_options=transformer_options)
     return img, txt
 
@@ -142,7 +187,7 @@ def tea_cache_patch_blocks_transition_replace(original_args, wrapper_options):
     img = original_args['img']
     transformer_options = wrapper_options.get('transformer_options', {})
     attrs = transformer_options.get(tea_cache_key_attrs, {})
-    should_calc = attrs.get('should_calc', True)
+    should_calc = not attrs.get('cache_enabled', False) or attrs.get('should_calc', True)
     if should_calc:
         img = wrapper_options.get('original_func')(**original_args, transformer_options=transformer_options)
     return img
@@ -152,7 +197,7 @@ def tea_cache_patch_single_blocks_replace(original_args, wrapper_options):
     txt = original_args['txt']
     transformer_options = wrapper_options.get('transformer_options', {})
     attrs = transformer_options.get(tea_cache_key_attrs, {})
-    should_calc = attrs.get('should_calc', True)
+    should_calc = not attrs.get('cache_enabled', False) or attrs.get('should_calc', True)
     if should_calc:
         img = wrapper_options.get('original_blocks')(**original_args, transformer_options=transformer_options)
     return img, txt
@@ -161,16 +206,17 @@ def tea_cache_patch_blocks_after_replace(original_args, wrapper_options):
     img = original_args['img']
     transformer_options = wrapper_options.get('transformer_options', {})
     attrs = transformer_options.get(tea_cache_key_attrs, {})
-    should_calc = attrs.get('should_calc', True)
+    should_calc = not attrs.get('cache_enabled', False) or attrs.get('should_calc', True)
     if should_calc:
         img = wrapper_options.get('original_func')(**original_args)
     return img
 
 def tea_cache_patch_final_transition_after(img, txt, transformer_options):
     attrs = transformer_options.get(tea_cache_key_attrs, {})
-    should_calc = attrs.get('should_calc', True)
+    should_calc = not attrs.get('cache_enabled', False) or attrs.get('should_calc', True)
     if should_calc:
-        attrs['previous_residual'] = img - attrs['ori_img']
+        current_state = attrs['accumulated_state'][attrs['current_state_type']]
+        current_state['previous_residual'] = (img - attrs['ori_img']).to(attrs['cache_device'])
     return img
 
 def tea_cache_patch_dit_exit(img, transformer_options):
@@ -208,12 +254,16 @@ class ApplyTeaCachePatchAdvanced:
                                       "default": 0.25,
                                       "min": 0.0,
                                       "max": 5.0,
-                                      "step": 0.01,
+                                      "step": 0.001,
                                       "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
                                                  "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup).\n"
                                                  "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup).\n"
                                                  "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup).\n"
-                                                 "WanVideo: 0 (original), 0.42 (1.5x speedup), 0.45 (1.85x speedup)."
+                                                 "WanVideo: 0 (original), reference values\n"
+                                                 "         Wan2.1 t2v 1.3B    0.05 0.07 0.08\n"
+                                                 "         Wan2.1 t2v 14B    0.14 0.15 0.2\n"
+                                                 "         Wan2.1 i2v 480P	0.13 0.19 0.26\n"
+                                                 "         Wan2.1 i2v 720P	0.18 0.2 0.3"
                                   }),
                 "start_at": ("FLOAT",
                              {
@@ -229,6 +279,14 @@ class ApplyTeaCachePatchAdvanced:
                     "max": 1.0,
                     "min": 0.0,
                 }),
+            },
+            "optional": {
+                "cache_device": (["main_device", "offload_device"], {"default": "offload_device"}),
+                "wan_coefficients": (["disabled", "t2v_1.3B", "t2v_14B", "i2v_14B_480P", "i2v_14B_720P"], {
+                    "default": "disabled",
+                    "tooltip": "WanVideo coefficients.\n"
+                               "If disabled, suggest set start_at to 0.2."
+                }),
             }
         }
 
@@ -239,7 +297,7 @@ class ApplyTeaCachePatchAdvanced:
     DESCRIPTION = ("Apply the TeaCache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
                    "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, WanVideo and MochiVideo.")
 
-    def apply_patch_advanced(self, model, rel_l1_thresh, start_at=0.0, end_at=1.0):
+    def apply_patch_advanced(self, model, rel_l1_thresh, start_at=0.0, end_at=1.0, cache_device="offload_device", wan_coefficients="disabled", from_simple=False):
 
         model = model.clone()
         patch_key = "tea_cache_wrapper"
@@ -256,16 +314,23 @@ class ApplyTeaCachePatchAdvanced:
 
         tea_cache_attrs['rel_l1_thresh'] = rel_l1_thresh
         model_sampling = model.get_model_object("model_sampling")
-        sigma_start = model_sampling.percent_to_sigma(start_at)
+        # For WanVideo, when wan_coefficients is disabled, the results of the first few steps are unstable.
+        sigma_start = model_sampling.percent_to_sigma(max(start_at, 0.2) if from_simple and wan_coefficients == 'disabled' and is_wan_video_model(diffusion_model) else start_at)
         sigma_end = model_sampling.percent_to_sigma(end_at)
         tea_cache_attrs['timestep_start'] = model_sampling.timestep(sigma_start)
         tea_cache_attrs['timestep_end'] = model_sampling.timestep(sigma_end)
+        tea_cache_attrs['cache_device'] = comfy.model_management.get_torch_device() if cache_device == "main_device" else comfy.model_management.unet_offload_device()
 
         if is_ltxv_video_model(diffusion_model):
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_ltxvideo, PatchKeys.dit_enter)
         elif is_mochi_video_model(diffusion_model):
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_mochivideo, PatchKeys.dit_enter)
         elif is_wan_video_model(diffusion_model):
+            # i2v or t2v
+            model_type = diffusion_model.model_type
+            tea_cache_attrs['wan_coefficients_type'] = wan_coefficients
+            if wan_coefficients != "disabled" and not wan_coefficients.startswith(model_type):
+                logging.warning(f"The wan video's model type is {model_type}, but the selected wan_coefficients is {wan_coefficients}.")
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter_for_wanvideo, PatchKeys.dit_enter)
         else:
             set_model_patch(model, PatchKeys.options_key, tea_cache_enter, PatchKeys.dit_enter)
@@ -299,13 +364,25 @@ class ApplyTeaCachePatch(ApplyTeaCachePatchAdvanced):
                                       "default": 0.25,
                                       "min": 0.0,
                                       "max": 5.0,
-                                      "step": 0.01,
+                                      "step": 0.001,
                                       "tooltip": "Flux: 0 (original), 0.25 (1.5x speedup), 0.4 (1.8x speedup), 0.6 (2.0x speedup), and 0.8 (2.25x speedup).\n"
                                                  "HunYuanVideo: 0 (original), 0.1 (1.6x speedup), 0.15 (2.1x speedup).\n"
                                                  "LTXVideo: 0 (original), 0.03 (1.6x speedup), 0.05 (2.1x speedup).\n"
                                                  "MochiVideo: 0 (original), 0.06 (1.5x speedup), 0.09 (2.1x speedup).\n"
-                                                 "WanVideo: 0 (original), 0.42 (1.5x speedup), 0.45 (1.85x speedup)."
+                                                 "WanVideo: 0 (original), reference values\n"
+                                                 "         Wan2.1 t2v 1.3B    0.05 0.07 0.08\n"
+                                                 "         Wan2.1 t2v 14B    0.14 0.15 0.2\n"
+                                                 "         Wan2.1 i2v 480P	0.13 0.19 0.26\n"
+                                                 "         Wan2.1 i2v 720P	0.18 0.2 0.3"
                                   }),
+            },
+            "optional": {
+                "cache_device": (["main_device", "offload_device"], {"default": "offload_device"}),
+                "wan_coefficients": (["disabled", "t2v_1.3B", "t2v_14B", "i2v_14B_480P", "i2v_14B_720P"], {
+                    "default": "disabled",
+                    "tooltip": "WanVideo coefficients.\n"
+                               "If disabled, equals to set start_at to 0.2 in node ApplyTeaCachePatchAdvanced."
+                }),
             }
         }
 
@@ -316,9 +393,9 @@ class ApplyTeaCachePatch(ApplyTeaCachePatchAdvanced):
     DESCRIPTION = ("Apply the TeaCache patch to accelerate the model. Use it together with nodes that have the suffix ForwardOverrider."
                    "\nThis is effective only for Flux, HunYuanVideo, LTXVideo, WanVideo and MochiVideo.")
 
-    def apply_patch(self, model, rel_l1_thresh):
+    def apply_patch(self, model, rel_l1_thresh, cache_device="offload_device", wan_coefficients="disabled"):
 
-        return super().apply_patch_advanced(model, rel_l1_thresh, start_at=0.0, end_at=1.0)
+        return super().apply_patch_advanced(model, rel_l1_thresh, start_at=0.0, end_at=1.0, cache_device=cache_device, wan_coefficients=wan_coefficients, from_simple=True)
 
 NODE_CLASS_MAPPINGS = {
     "ApplyTeaCachePatch": ApplyTeaCachePatch,
