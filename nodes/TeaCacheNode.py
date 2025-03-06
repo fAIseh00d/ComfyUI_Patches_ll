@@ -238,9 +238,15 @@ def tea_cache_prepare_wrapper(wrapper_executor, noise, latent_image, sampler, si
     finally:
         diffusion_model = cfg_guider.model_patcher.model.diffusion_model
         if hasattr(diffusion_model, "flux_tea_cache"):
+            print_tea_cache_executed_state(getattr(diffusion_model, "flux_tea_cache"))
             del diffusion_model.flux_tea_cache
 
     return out
+
+def print_tea_cache_executed_state(attrs):
+    executed_state = attrs.get('accumulated_state', {})
+    for state_type, state in executed_state.items():
+        logging.info(f"skipped {state_type} steps: {state['skipped_steps']}")
 
 class ApplyTeaCachePatchAdvanced:
 
@@ -284,8 +290,7 @@ class ApplyTeaCachePatchAdvanced:
                 "cache_device": (["main_device", "offload_device"], {"default": "offload_device"}),
                 "wan_coefficients": (["disabled", "t2v_1.3B", "t2v_14B", "i2v_14B_480P", "i2v_14B_720P"], {
                     "default": "disabled",
-                    "tooltip": "WanVideo coefficients.\n"
-                               "If disabled, suggest set start_at to 0.2."
+                    "tooltip": "WanVideo coefficients."
                 }),
             }
         }
@@ -314,7 +319,7 @@ class ApplyTeaCachePatchAdvanced:
 
         tea_cache_attrs['rel_l1_thresh'] = rel_l1_thresh
         model_sampling = model.get_model_object("model_sampling")
-        # For WanVideo, when wan_coefficients is disabled, the results of the first few steps are unstable.
+        # For WanVideo, when wan_coefficients is disabled, the results of the first few steps are unstable?
         sigma_start = model_sampling.percent_to_sigma(max(start_at, 0.2) if from_simple and wan_coefficients == 'disabled' and is_wan_video_model(diffusion_model) else start_at)
         sigma_end = model_sampling.percent_to_sigma(end_at)
         tea_cache_attrs['timestep_start'] = model_sampling.timestep(sigma_start)
@@ -380,8 +385,7 @@ class ApplyTeaCachePatch(ApplyTeaCachePatchAdvanced):
                 "cache_device": (["main_device", "offload_device"], {"default": "offload_device"}),
                 "wan_coefficients": (["disabled", "t2v_1.3B", "t2v_14B", "i2v_14B_480P", "i2v_14B_720P"], {
                     "default": "disabled",
-                    "tooltip": "WanVideo coefficients.\n"
-                               "If disabled, equals to set start_at to 0.2 in node ApplyTeaCachePatchAdvanced."
+                    "tooltip": "WanVideo coefficients."
                 }),
             }
         }
@@ -395,7 +399,7 @@ class ApplyTeaCachePatch(ApplyTeaCachePatchAdvanced):
 
     def apply_patch(self, model, rel_l1_thresh, cache_device="offload_device", wan_coefficients="disabled"):
 
-        return super().apply_patch_advanced(model, rel_l1_thresh, start_at=0.0, end_at=1.0, cache_device=cache_device, wan_coefficients=wan_coefficients, from_simple=True)
+        return super().apply_patch_advanced(model, rel_l1_thresh, start_at=0.0, end_at=1.0, cache_device=cache_device, wan_coefficients=wan_coefficients, from_simple=False)
 
 NODE_CLASS_MAPPINGS = {
     "ApplyTeaCachePatch": ApplyTeaCachePatch,
