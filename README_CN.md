@@ -47,6 +47,7 @@ ComfyUI主体版本需要>=0.3.7
 | LTXVideo     | 0    | 0.03 | -    | 0.05 |
 | MochiVideo   | 0    | 0.06 | -    | 0.09 |
 | WanVideo     | 0    | -    | -    | -    |
+
 注: "-" 表示加速不明显、低质量或未测试。WanVideo的不同模型加速效果有差异。
 
 ### First Block Cache (residual_diff_threshold value)
