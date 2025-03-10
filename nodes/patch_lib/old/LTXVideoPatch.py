@@ -4,10 +4,9 @@ import torch
 from torch import Tensor
 
 from comfy.ldm.lightricks.model import precompute_freqs_cis
-from comfy.ldm.lightricks.symmetric_patchifier import latent_to_pixel_coords
-from ..patch_util import PatchKeys
+from ...patch_util import PatchKeys
 
-
+# changed in comfyui hash commit 93fedd92fe0eb67a09e29069b05adebb40678639 (between comfyui version 0.3.19 and 1.3.20)
 def ltx_forward_orig(
     self,
     x,
@@ -16,11 +15,10 @@ def ltx_forward_orig(
     attention_mask,
     frame_rate=25,
     guiding_latent=None,
+    guiding_latent_noise_scale=0,
     transformer_options={},
-    keyframe_idxs=None,
     **kwargs
 ) -> Tensor:
-    patches_replace = transformer_options.get("patches_replace", {})
     patches_point = transformer_options.get(PatchKeys.options_key, {})
 
     transformer_options[PatchKeys.running_net_model] = self
@@ -28,31 +26,50 @@ def ltx_forward_orig(
     patches_enter = patches_point.get(PatchKeys.dit_enter, [])
     if patches_enter is not None and len(patches_enter) > 0:
         for patch_enter in patches_enter:
-            x, timestep, context, attention_mask, frame_rate, guiding_latent, keyframe_idxs = patch_enter(
+            x, timestep, context, attention_mask, frame_rate, guiding_latent, guiding_latent_noise_scale = patch_enter(
                 x,
                 timestep,
                 context,
                 attention_mask,
                 frame_rate,
                 guiding_latent,
-                keyframe_idxs,
+                guiding_latent_noise_scale,
                 transformer_options
             )
 
-    orig_shape = list(x.shape)
-
-    x, latent_coords = self.patchifier.patchify(x)
-    pixel_coords = latent_to_pixel_coords(
-        latent_coords=latent_coords,
-        scale_factors=self.vae_scale_factors,
-        causal_fix=self.causal_temporal_positioning,
+    indices_grid = self.patchifier.get_grid(
+        orig_num_frames=x.shape[2],
+        orig_height=x.shape[3],
+        orig_width=x.shape[4],
+        batch_size=x.shape[0],
+        scale_grid=((1 / frame_rate) * 8, 32, 32),
+        device=x.device,
     )
 
-    if keyframe_idxs is not None:
-        pixel_coords[:, :, -keyframe_idxs.shape[2]:] = keyframe_idxs
+    if guiding_latent is not None:
+        ts = torch.ones([x.shape[0], 1, x.shape[2], x.shape[3], x.shape[4]], device=x.device, dtype=x.dtype)
+        input_ts = timestep.view([timestep.shape[0]] + [1] * (x.ndim - 1))
+        ts *= input_ts
+        ts[:, :, 0] = guiding_latent_noise_scale * (input_ts[:, :, 0] ** 2)
+        timestep = self.patchifier.patchify(ts)
+        input_x = x.clone()
+        x[:, :, 0] = guiding_latent[:, :, 0]
+        if guiding_latent_noise_scale > 0:
+            if self.generator is None:
+                self.generator = torch.Generator(device=x.device).manual_seed(42)
+            elif self.generator.device != x.device:
+                self.generator = torch.Generator(device=x.device).set_state(self.generator.get_state())
 
-    fractional_coords = pixel_coords.to(torch.float32)
-    fractional_coords[:, 0] = fractional_coords[:, 0] * (1.0 / frame_rate)
+            noise_shape = [guiding_latent.shape[0], guiding_latent.shape[1], 1, guiding_latent.shape[3], guiding_latent.shape[4]]
+            scale = guiding_latent_noise_scale * (input_ts ** 2)
+            guiding_noise = scale * torch.randn(size=noise_shape, device=x.device, generator=self.generator)
+
+            x[:, :, 0] = guiding_noise[:, :, 0] + x[:, :, 0] *  (1.0 - scale[:, :, 0])
+
+
+    orig_shape = list(x.shape)
+
+    x = self.patchifier.patchify(x)
 
     x = self.patchify_proj(x)
     timestep = timestep * 1000.0
@@ -60,7 +77,7 @@ def ltx_forward_orig(
     if attention_mask is not None and not torch.is_floating_point(attention_mask):
         attention_mask = (attention_mask - 1).to(x.dtype).reshape((attention_mask.shape[0], 1, -1, attention_mask.shape[-1])) * torch.finfo(x.dtype).max
 
-    pe = precompute_freqs_cis(fractional_coords, dim=self.inner_dim, out_dtype=x.dtype)
+    pe = precompute_freqs_cis(indices_grid, dim=self.inner_dim, out_dtype=x.dtype)
 
     batch_size = x.shape[0]
     timestep, embedded_timestep = self.adaln_single(
@@ -240,6 +257,9 @@ def ltx_forward_orig(
         output_num_frames=orig_shape[2],
         out_channels=orig_shape[1] // math.prod(self.patchifier.patch_size),
     )
+
+    if guiding_latent is not None:
+        x[:, :, 0] = (input_x[:, :, 0] - guiding_latent[:, :, 0]) / input_ts[:, :, 0]
 
     patches_exit = patches_point.get(PatchKeys.dit_exit, [])
     if patches_exit is not None and len(patches_exit) > 0:

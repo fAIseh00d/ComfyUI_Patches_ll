@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor
 
-from ..patch_util import PatchKeys
+from ...patch_util import PatchKeys
 from comfy.ldm.flux.layers import timestep_embedding
 
 
@@ -15,9 +15,9 @@ def hunyuan_forward_orig(
     timesteps: Tensor,
     y: Tensor,
     guidance: Tensor = None,
-    guiding_frame_index=None,
     control=None,
     transformer_options={},
+    **kwargs
 ) -> Tensor:
     patches_replace = transformer_options.get("patches_replace", {})
     patches_point = transformer_options.get(PatchKeys.options_key, {})
@@ -44,17 +44,7 @@ def hunyuan_forward_orig(
     img = self.img_in(img)
     vec = self.time_in(timestep_embedding(timesteps, 256, time_factor=1.0).to(img.dtype))
 
-    if guiding_frame_index is not None:
-        token_replace_vec = self.time_in(timestep_embedding(guiding_frame_index, 256, time_factor=1.0))
-        vec_ = self.vector_in(y[:, :self.params.vec_in_dim])
-        vec = torch.cat([(vec_ + token_replace_vec).unsqueeze(1), (vec_ + vec).unsqueeze(1)], dim=1)
-        frame_tokens = (initial_shape[-1] // self.patch_size[-1]) * (initial_shape[-2] // self.patch_size[-2])
-        modulation_dims = [(0, frame_tokens, 0), (frame_tokens, None, 1)]
-        modulation_dims_txt = [(0, None, 1)]
-    else:
-        vec = vec + self.vector_in(y[:, :self.params.vec_in_dim])
-        modulation_dims = None
-        modulation_dims_txt = None
+    vec = vec + self.vector_in(y[:, :self.params.vec_in_dim])
 
     if self.params.guidance_embed:
         if guidance is not None:
@@ -83,8 +73,7 @@ def hunyuan_forward_orig(
         for blocks_before in patch_blocks_before:
             img, txt, vec, ids, pe = blocks_before(img, txt, vec, ids, pe, transformer_options)
 
-    def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={},
-                           modulation_dims_img=None, modulation_dims_txt=None):
+    def double_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
         running_net_model = transformer_options[PatchKeys.running_net_model]
         patch_double_blocks_with_control_replace = patches_point.get(PatchKeys.dit_double_block_with_control_replace)
         for i, block in enumerate(running_net_model.double_blocks):
@@ -96,9 +85,7 @@ def hunyuan_forward_orig(
                                                                      'vec': vec,
                                                                      'pe': pe,
                                                                      'control': control,
-                                                                     'attn_mask': attn_mask,
-                                                                     'modulation_dims_img': modulation_dims_img,
-                                                                     'modulation_dims_txt': modulation_dims_txt
+                                                                     'attn_mask': attn_mask
                                                                      },
                                                                     {
                                                                         "original_func": double_block_and_control_replace,
@@ -113,8 +100,6 @@ def hunyuan_forward_orig(
                                                             pe=pe,
                                                             control=control,
                                                             attn_mask=attn_mask,
-                                                            modulation_dims_img=modulation_dims_img,
-                                                            modulation_dims_txt=modulation_dims_txt,
                                                             transformer_options=transformer_options
                                                             )
 
@@ -130,8 +115,6 @@ def hunyuan_forward_orig(
                                                 "pe": pe,
                                                 "control": control,
                                                 "attn_mask": attn_mask,
-                                                "modulation_dims_img": modulation_dims,
-                                                "modulation_dims_txt": modulation_dims_txt,
                                                 },
                                                {
                                                    "original_blocks": double_blocks_wrap,
@@ -144,8 +127,6 @@ def hunyuan_forward_orig(
                                       pe=pe,
                                       control=control,
                                       attn_mask=attn_mask,
-                                      modulation_dims_img=modulation_dims,
-                                      modulation_dims_txt=modulation_dims_txt,
                                       transformer_options=transformer_options
                                       )
 
@@ -175,7 +156,7 @@ def hunyuan_forward_orig(
         for patch_single_blocks_before in patches_single_blocks_before:
             img, txt = patch_single_blocks_before(img, txt, transformer_options)
 
-    def single_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}, modulation_dims=None):
+    def single_blocks_wrap(img, txt, vec, pe, control=None, attn_mask=None, transformer_options={}):
         running_net_model = transformer_options[PatchKeys.running_net_model]
         for i, block in enumerate(running_net_model.single_blocks):
             if ("single_block", i) in blocks_replace:
@@ -184,22 +165,20 @@ def hunyuan_forward_orig(
                     out["img"] = block(args["img"],
                                        vec=args["vec"],
                                        pe=args["pe"],
-                                       attn_mask=args.get("attention_mask"),
-                                       modulation_dims=args.get("modulation_dims"))
+                                       attn_mask=args.get("attention_mask"))
                     return out
 
                 out = blocks_replace[("single_block", i)]({"img": img,
                                                            "vec": vec,
                                                            "pe": pe,
-                                                           "attention_mask": attn_mask,
-                                                           'modulation_dims': modulation_dims},
+                                                           "attention_mask": attn_mask},
                                                           {
                                                               "original_block": block_wrap,
                                                               "transformer_options": transformer_options
                                                           })
                 img = out["img"]
             else:
-                img = block(img, vec=vec, pe=pe, attn_mask=attn_mask, modulation_dims=modulation_dims)
+                img = block(img, vec=vec, pe=pe, attn_mask=attn_mask)
 
             if control is not None:  # Controlnet
                 control_o = control.get("output")
@@ -218,8 +197,7 @@ def hunyuan_forward_orig(
                                                 "vec": vec,
                                                 "pe": pe,
                                                 "control": control,
-                                                "attn_mask": attn_mask,
-                                                "modulation_dims": modulation_dims,
+                                                "attn_mask": attn_mask
                                                 },
                                                {
                                                    "original_blocks": single_blocks_wrap,
@@ -232,7 +210,6 @@ def hunyuan_forward_orig(
                                  pe=pe,
                                  control=control,
                                  attn_mask=attn_mask,
-                                 modulation_dims=modulation_dims,
                                  transformer_options=transformer_options
                                  )
 
@@ -261,7 +238,7 @@ def hunyuan_forward_orig(
         for patch_final_layer_before in patches_final_layer_before:
             img = patch_final_layer_before(img, txt, transformer_options)
 
-    img = self.final_layer(img, vec, modulation_dims=modulation_dims)  # (N, T, patch_size ** 2 * out_channels)
+    img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
 
     shape = initial_shape[-3:]
     for i in range(len(shape)):
@@ -279,8 +256,7 @@ def hunyuan_forward_orig(
 
     return img
 
-
-def double_block_and_control_replace(i, block, img, txt=None, vec=None, pe=None, control=None, attn_mask=None, transformer_options={}, modulation_dims_img=None, modulation_dims_txt=None):
+def double_block_and_control_replace(i, block, img, txt=None, vec=None, pe=None, control=None, attn_mask=None, transformer_options={}):
     blocks_replace = transformer_options.get("patches_replace", {}).get("dit", {})
     if ("double_block", i) in blocks_replace:
         def block_wrap(args):
@@ -289,18 +265,14 @@ def double_block_and_control_replace(i, block, img, txt=None, vec=None, pe=None,
                                            txt=args["txt"],
                                            vec=args["vec"],
                                            pe=args["pe"],
-                                           attn_mask=args.get("attention_mask"),
-                                           modulation_dims_img=args["modulation_dims_img"],
-                                           modulation_dims_txt=args["modulation_dims_txt"])
+                                           attn_mask=args.get("attention_mask"))
             return out
 
         out = blocks_replace[("double_block", i)]({"img": img,
                                                    "txt": txt,
                                                    "vec": vec,
                                                    "pe": pe,
-                                                   "attention_mask": attn_mask,
-                                                   'modulation_dims_img': modulation_dims_img,
-                                                   'modulation_dims_txt': modulation_dims_txt
+                                                   "attention_mask": attn_mask
                                                    },
                                                   {
                                                       "original_block": block_wrap,
@@ -309,7 +281,7 @@ def double_block_and_control_replace(i, block, img, txt=None, vec=None, pe=None,
         txt = out["txt"]
         img = out["img"]
     else:
-        img, txt = block(img=img, txt=txt, vec=vec, pe=pe, attn_mask=attn_mask, modulation_dims_img=modulation_dims_img, modulation_dims_txt=modulation_dims_txt)
+        img, txt = block(img=img, txt=txt, vec=vec, pe=pe, attn_mask=attn_mask)
     if control is not None:  # Controlnet
         control_i = control.get("input")
         if i < len(control_i):
